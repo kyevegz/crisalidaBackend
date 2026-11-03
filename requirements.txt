@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+psycopg2-binary
+DBUtils
+python-dotenv
+pydantic>=2
+bcrypt
+PyJWT
+cryptography
+requests
