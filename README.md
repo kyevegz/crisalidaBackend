@@ -96,6 +96,9 @@ cada entorno**.
 | `REGISTRO_MINUTOS` | `120` | Cuántos minutos tiene una usuaria para terminar su registro una vez iniciado. |
 | `REPOSO_DIAS` | `7` | Días sin usar la app para que Lilu pase a `reposo` (el campo reposo de `GET /progreso/yo`).
 | `AVISO_VERSION` | `1` | Versión vigente del aviso de privacidad y términos. Al cambiarla, a todas las usuarias se les pide aceptar de nuevo en su siguiente login. |
+| `BREVO_API_KEY` | vacío | Llave de la API de Brevo para enviar correos. Sin ella no se envía ningún correo (la app sigue funcionando). |
+| `CORREO_REMITENTE` | vacío | Correo desde el que se envía, verificado en Brevo. Sin él no se envían correos. |
+| `CORREO_NOMBRE_REMITENTE` | `Crisálida` | Nombre que ven las usuarias como remitente. |
 | `GEMINI_API_KEY` | vacío | Llave de Google AI Studio para el radar de talentos. Sin ella el radar usa un banco de preguntas de respaldo. |
 | `GEMINI_MODEL` | `gemini-flash-latest` | Nombre exacto del modelo de Gemini (uno Flash o Flash-Lite marcado como gratuito en AI Studio). |
 | `AUTOAPROBAR_PUBLICACIONES` | `false` | Con `true`, las publicaciones nuevas se aprueban solas (útil para demostraciones). Con `false` quedan "en revisión". |
@@ -107,6 +110,7 @@ cada entorno**.
 |---|---|
 | `main.py` | La aplicación, el registro y el inicio de sesión. |
 | `seguridad.py` | PIN, tokens y cifrado. |
+| `correo.py` | Envío de correos con Brevo. Prueba: `python correo.py tu_correo@ejemplo.com`. |
 | `dependencias.py` | Quién puede entrar a cada endpoint (modo normal, camuflaje, registro). |
 | `db.py` | Conexión a la base de datos. |
 | `radar.py`, `radar_logica.py` | Radar de talentos y su IA. |
