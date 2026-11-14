@@ -187,3 +187,25 @@ def borrar_entrada(entrada_id: str, usuaria: dict = Depends(usuaria_vendedora)):
     if ok is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos ese registro")
     return {"borrada": True}
+
+
+@router.delete("/entradas")
+def borrar_historial(usuaria: dict = Depends(usuaria_vendedora)):
+    """Borra TODO el historial de bienestar de la usuaria autenticada (los 4 bloques).
+
+    No toca el progreso: las flores, el nivel y la etapa de Lilu viven en `mascotas` y
+    `eventos_progreso`, que no se modifican. El tope de flores de una vez al día también
+    se conserva, así que borrar y volver a registrar el mismo día no da flores de más.
+    Borra además la copia de la tabla antigua `registros_emocionales` (si ya se elimina
+    esa tabla, quita también la segunda sentencia), para que no quede nada guardado."""
+    with obtener_conexion() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM bienestar_entradas WHERE usuaria_id = %s", (usuaria["id"],))
+                borradas = cur.rowcount
+                cur.execute("DELETE FROM registros_emocionales WHERE usuaria_id = %s", (usuaria["id"],))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return {"borradas": borradas}
