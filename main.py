@@ -15,6 +15,7 @@ from radar import (
 )
 from bienestar import router as bienestar_router
 from demo import MODO_DEMO, router as demo_router
+from frases import router as frases_router
 from marketplace import router as marketplace_router
 from progreso import router as progreso_router
 from publicaciones import router as publicaciones_router
@@ -28,6 +29,7 @@ app.include_router(marketplace_router)     # /categorias, /marketplace
 app.include_router(retos_router)           # /retos/...
 app.include_router(publicaciones_router)   # /publicaciones/..., /imagenes/...
 app.include_router(bienestar_router)       # /bienestar/...
+app.include_router(frases_router)          # /frases-apoyo
 if MODO_DEMO:                              # atajos para la presentación (apagados por defecto)
     app.include_router(demo_router)        # /demo/...
 

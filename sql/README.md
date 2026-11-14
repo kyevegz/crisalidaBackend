@@ -23,7 +23,7 @@ Córrelas en este orden, completas, en el editor SQL de Neon (o con `psql`):
 | 003 | `003_progreso_flores_y_etapas.sql` | Flores, etapas de Lilu, reglas de recompensa y triggers actualizados |
 | 004 | `004_bienestar_entradas_e_imagenes_retos.sql` | Varios registros de bienestar al día e imágenes de retos |
 | 005 | `005_categorias_nuevas.sql` | Categorías nuevas de productos y servicios (se puede repetir sin problema) |
-
+| 006| `006_frases_apoyo.sql` |	Tabla de frases de apoyo (Respira con Lilu) con las 25 frases iniciales (se puede repetir sin duplicar)
 Notas:
 - `002` **no** va dentro de una transacción (no tiene `BEGIN/COMMIT`). Si falla a la mitad, revisa qué alcanzó a crear antes de repetirla.
 - Las demás migraciones sí usan transacción: si algo falla, no queda nada a medias.
