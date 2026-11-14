@@ -1,3 +1,4 @@
+import os
 import re
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
@@ -5,7 +6,7 @@ from psycopg2 import errors as pg_errors
 from pydantic import BaseModel, field_validator, model_validator
 
 from db import obtener_conexion
-from dependencias import sesion_registro, usuaria_actual
+from dependencias import sesion_registro, usuaria_actual, usuaria_modo_normal
 from radar import (
     RadarCompletoIn,
     guardar_perfil,
@@ -38,6 +39,9 @@ PIN_RE = re.compile(r"^\d{6}$")
 PINS_DEBILES = {"123456", "654321", "123123", "121212", "112233", "012345"}
 MAX_INTENTOS = 5          # fallos seguidos antes de bloquear
 MINUTOS_BLOQUEO = 15
+# Versión vigente del aviso de privacidad y términos. Al cambiarla (variable AVISO_VERSION), a todas
+# las usuarias se les pide aceptar de nuevo en su siguiente login.
+AVISO_VERSION = os.getenv("AVISO_VERSION", "1")
 MENSAJE_CREDENCIALES = "Seudónimo o PIN incorrectos"
 
 
@@ -88,6 +92,8 @@ class SesionOut(BaseModel):
     modo: str      # "normal" o "camuflaje" (en camuflaje la app muestra la galería de mariposas)
     token: str
     rol: str = "vendedora"   # "vendedora" o "compradora"
+    aviso_version: str = AVISO_VERSION   # versión vigente del aviso
+    aviso_pendiente: bool = False        # True: la app debe mostrar el aviso y llamar a /auth/aceptar-aviso
 
 
 ROLES = ("vendedora", "compradora")
@@ -98,6 +104,9 @@ class RegistroCompletoIn(RegistroIn):
     terminarlo); la compradora no pasa por el radar. El rol es obligatorio: no se asume ninguno."""
     rol: str | None = None
     radar: RadarCompletoIn | None = None
+    acepta_aviso: bool = False          # casilla "He leído y acepto el Aviso de Privacidad y los Términos"
+    es_mayor_de_edad: bool = False      # casilla "Confirmo que soy mayor de 18 años"
+    version_aviso: str | None = None    # versión del aviso que la usuaria leyó
 
     @model_validator(mode="after")
     def _rol_y_radar(self):
@@ -107,6 +116,27 @@ class RegistroCompletoIn(RegistroIn):
             raise ValueError("La vendedora debe completar el radar para terminar su registro")
         if self.rol == "compradora" and self.radar is not None:
             raise ValueError("La compradora no completa el radar")
+        return self
+
+    @model_validator(mode="after")
+    def _aviso(self):
+        if not self.acepta_aviso:
+            raise ValueError("Debes aceptar el aviso de privacidad y los términos para crear tu cuenta")
+        if not self.es_mayor_de_edad:
+            raise ValueError("Debes confirmar que eres mayor de 18 años para crear tu cuenta")
+        if self.version_aviso != AVISO_VERSION:
+            raise ValueError("El aviso de privacidad cambió. Actualiza la app e inténtalo de nuevo")
+        return self
+
+
+class AceptarAvisoIn(BaseModel):
+    version: str
+    es_mayor_de_edad: bool = False   # se confirma junto con cada aceptación, incluidas las cuentas anteriores al aviso
+
+    @model_validator(mode="after")
+    def _mayor_de_edad(self):
+        if not self.es_mayor_de_edad:
+            raise ValueError("Debes confirmar que eres mayor de 18 años para continuar")
         return self
 
 
@@ -176,6 +206,10 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
                 usuaria = cur.fetchone()
                 # C1-01: cada usuaria nace con su mascota (relación 1:1)...
                 cur.execute("INSERT INTO mascotas (usuaria_id) VALUES (%s)", (usuaria["id"],))
+                cur.execute(
+                    "INSERT INTO aceptaciones_aviso (usuaria_id, version) VALUES (%s, %s)",
+                    (usuaria["id"], datos.version_aviso),
+                )
                 # ...y la vendedora con su perfil inicial del radar (RF-03), todo en la misma transacción
                 if radar is not None:
                     guardar_perfil(cur, usuaria["id"], radar.actividades, radar.tiempo, respuestas, perfil)
@@ -248,6 +282,15 @@ def iniciar_sesion(datos: LoginIn):
                 "UPDATE usuarias SET intentos_fallidos = 0, bloqueada_hasta = NULL WHERE id = %s",
                 (u["id"],),
             )
+            # Solo en modo normal (el camuflaje no muestra nada): ¿ya aceptó la versión vigente del aviso?
+            aviso_pendiente = False
+            if modo == "normal":
+                cur.execute(
+                    """SELECT NOT EXISTS (SELECT 1 FROM aceptaciones_aviso
+                                           WHERE usuaria_id = %s AND version = %s) AS pendiente""",
+                    (u["id"], AVISO_VERSION),
+                )
+                aviso_pendiente = cur.fetchone()["pendiente"]
         conn.commit()
 
     uid = str(u["id"])
@@ -258,7 +301,32 @@ def iniciar_sesion(datos: LoginIn):
         modo=modo,
         token=crear_token(uid, modo, u["rol"]),
         rol=u["rol"],
+        aviso_pendiente=aviso_pendiente,
     )
+
+
+@app.post("/auth/aceptar-aviso")
+def aceptar_aviso(datos: AceptarAvisoIn, usuaria: dict = Depends(usuaria_modo_normal)):
+    """La usuaria acepta la versión vigente del aviso (la app lo llama cuando el login dijo
+    aviso_pendiente = true) y confirma que es mayor de 18 años. Si manda otra versión se rechaza,
+    para no guardar una aceptación vieja. Cada fila de aceptaciones_aviso significa: aceptó esa
+    versión Y confirmó ser mayor de edad (el servidor no guarda la fila si falta alguna de las dos)."""
+    if datos.version != AVISO_VERSION:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "El aviso de privacidad cambió. Actualiza la app e inténtalo de nuevo")
+    with obtener_conexion() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO aceptaciones_aviso (usuaria_id, version) VALUES (%s, %s)
+                       ON CONFLICT (usuaria_id, version) DO NOTHING""",
+                    (usuaria["id"], datos.version),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return {"aviso_version": AVISO_VERSION, "aceptado": True}
 
 
 @app.get("/auth/yo")

@@ -95,6 +95,7 @@ cada entorno**.
 | `JWT_HORAS` | `24` | Cuántas horas dura una sesión antes de pedir el PIN de nuevo. |
 | `REGISTRO_MINUTOS` | `120` | Cuántos minutos tiene una usuaria para terminar su registro una vez iniciado. |
 | `REPOSO_DIAS` | `7` | Días sin usar la app para que Lilu pase a `reposo` (el campo reposo de `GET /progreso/yo`).
+| `AVISO_VERSION` | `1` | Versión vigente del aviso de privacidad y términos. Al cambiarla, a todas las usuarias se les pide aceptar de nuevo en su siguiente login. |
 | `GEMINI_API_KEY` | vacío | Llave de Google AI Studio para el radar de talentos. Sin ella el radar usa un banco de preguntas de respaldo. |
 | `GEMINI_MODEL` | `gemini-flash-latest` | Nombre exacto del modelo de Gemini (uno Flash o Flash-Lite marcado como gratuito en AI Studio). |
 | `AUTOAPROBAR_PUBLICACIONES` | `false` | Con `true`, las publicaciones nuevas se aprueban solas (útil para demostraciones). Con `false` quedan "en revisión". |
