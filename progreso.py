@@ -4,6 +4,8 @@
 - La ETAPA de Lilu (Huevo / Larva / Mariposa) depende de las flores acumuladas.
 Quien cuenta todo es el trigger de la base; aquí solo se LEE (y se cambia el avatar).
 """
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
@@ -12,6 +14,9 @@ from dependencias import usuaria_modo_normal
 
 router = APIRouter(tags=["Progreso"])
 
+# Días sin actividad para que Lilu pase a reposo (variable de entorno REPOSO_DIAS)
+REPOSO_DIAS = int(os.getenv("REPOSO_DIAS", "7"))
+
 
 def _porcentaje(actual: int, desde: int, hasta: int | None) -> int:
     if hasta is None or hasta <= desde:
@@ -19,11 +24,32 @@ def _porcentaje(actual: int, desde: int, hasta: int | None) -> int:
     return max(0, min(100, round((actual - desde) * 100 / (hasta - desde))))
 
 
+def registrar_actividad(cur, uid) -> bool:
+    """Marca que la usuaria usó la app AHORA (la llaman el login y /auth/yo).
+    Devuelve True si Lilu estaba en reposo justo antes de este uso (para que la app
+    muestre la animación de "Lilu despierta"). No toca flores, nivel ni etapa."""
+    cur.execute(
+        """
+        SELECT ultima_actividad < now() - make_interval(days => %s) AS en_reposo
+          FROM mascotas
+         WHERE usuaria_id = %s
+           FOR UPDATE
+        """,
+        (REPOSO_DIAS, uid),
+    )
+    fila = cur.fetchone()
+    if fila is None:
+        return False
+    cur.execute("UPDATE mascotas SET ultima_actividad = now() WHERE usuaria_id = %s", (uid,))
+    return bool(fila["en_reposo"])
+
+
 def calcular_progreso(cur, uid) -> dict:
     cur.execute(
         """
         SELECT u.seudonimo, u.avatar, m.nombre AS mascota, m.flores, m.nivel,
                m.actividades_completadas AS actividades,
+               (m.ultima_actividad < now() - make_interval(days => %s)) AS reposo,
                n.nombre AS nivel_nombre, n.descripcion AS nivel_descripcion,
                n.actividades_requeridas AS actividades_desde
           FROM usuarias u
@@ -31,7 +57,7 @@ def calcular_progreso(cur, uid) -> dict:
           JOIN niveles  n ON n.nivel = m.nivel
          WHERE u.id = %s
         """,
-        (uid,),
+        (REPOSO_DIAS, uid),
     )
     base = cur.fetchone()
     if base is None:
@@ -77,6 +103,7 @@ def calcular_progreso(cur, uid) -> dict:
         "lilu": {
             "nombre": base["mascota"],
             "flores": base["flores"],
+            "reposo": base["reposo"],
             "etapa": actual["etapa"],
             "etapa_nombre": actual["nombre"],
             "flores_siguiente": siguiente["flores_requeridas"] if siguiente else None,

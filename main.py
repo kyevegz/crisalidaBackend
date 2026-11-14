@@ -16,7 +16,7 @@ from radar import (
 from bienestar import router as bienestar_router
 from demo import MODO_DEMO, router as demo_router
 from marketplace import router as marketplace_router
-from progreso import router as progreso_router
+from progreso import registrar_actividad, router as progreso_router
 from publicaciones import router as publicaciones_router
 from retos import router as retos_router
 from seguridad import HASH_FALSO, crear_token, crear_token_registro, hashear_pin, verificar_pin
@@ -85,6 +85,7 @@ class SesionOut(BaseModel):
     avatar: str
     modo: str      # "normal" o "camuflaje" (en camuflaje la app muestra la galería de mariposas)
     token: str
+    estaba_en_reposo: bool = False   # True si Lilu llevaba días en reposo (la app muestra "Lilu despierta")
 
 
 class RegistroCompletoIn(RegistroIn):
@@ -227,6 +228,8 @@ def iniciar_sesion(datos: LoginIn):
                 "UPDATE usuarias SET intentos_fallidos = 0, bloqueada_hasta = NULL WHERE id = %s",
                 (u["id"],),
             )
+            # Solo en modo normal: en camuflaje no se usa la app de verdad
+            estaba_en_reposo = registrar_actividad(cur, u["id"]) if modo == "normal" else False
         conn.commit()
 
     uid = str(u["id"])
@@ -236,6 +239,7 @@ def iniciar_sesion(datos: LoginIn):
         avatar=u["avatar"],
         modo=modo,
         token=crear_token(uid, modo),
+        estaba_en_reposo=estaba_en_reposo,
     )
 
 
@@ -246,6 +250,11 @@ def mi_sesion(usuaria: dict = Depends(usuaria_actual)):
         with conn.cursor() as cur:
             cur.execute("SELECT seudonimo, avatar FROM usuarias WHERE id = %s", (usuaria["id"],))
             u = cur.fetchone()
+            estaba_en_reposo = False
+            if u is not None and usuaria["modo"] == "normal":
+                estaba_en_reposo = registrar_actividad(cur, usuaria["id"])
+        conn.commit()
     if u is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
-    return {"usuaria_id": usuaria["id"], "seudonimo": u["seudonimo"], "avatar": u["avatar"], "modo": usuaria["modo"]}
+    return {"usuaria_id": usuaria["id"], "seudonimo": u["seudonimo"], "avatar": u["avatar"],
+            "modo": usuaria["modo"], "estaba_en_reposo": estaba_en_reposo}
