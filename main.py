@@ -87,6 +87,7 @@ class SesionOut(BaseModel):
     avatar: str
     modo: str      # "normal" o "camuflaje" (en camuflaje la app muestra la galería de mariposas)
     token: str
+    rol: str = "vendedora"   # "vendedora" o "compradora"
 
 
 class RegistroCompletoIn(RegistroIn):
@@ -152,7 +153,7 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
                     """
                     INSERT INTO usuarias (seudonimo, pin_hash, pin_camuflaje_hash)
                     VALUES (%s, %s, %s)
-                    RETURNING id, seudonimo, avatar
+                    RETURNING id, seudonimo, avatar, rol
                     """,
                     (datos.seudonimo, pin_hash, camuflaje_hash),
                 )
@@ -175,7 +176,8 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
         seudonimo=usuaria["seudonimo"],
         avatar=usuaria["avatar"],
         modo="normal",
-        token=crear_token(uid, "normal"),
+        token=crear_token(uid, "normal", usuaria["rol"]),
+        rol=usuaria["rol"],
     )
 
 
@@ -185,7 +187,7 @@ def iniciar_sesion(datos: LoginIn):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, seudonimo, avatar, pin_hash, pin_camuflaje_hash,
+                SELECT id, seudonimo, avatar, rol, pin_hash, pin_camuflaje_hash,
                        bloqueada_hasta, (bloqueada_hasta IS NOT NULL AND bloqueada_hasta > now()) AS bloqueada
                 FROM usuarias
                 WHERE lower(seudonimo) = lower(%s)
@@ -237,7 +239,8 @@ def iniciar_sesion(datos: LoginIn):
         seudonimo=u["seudonimo"],
         avatar=u["avatar"],
         modo=modo,
-        token=crear_token(uid, modo),
+        token=crear_token(uid, modo, u["rol"]),
+        rol=u["rol"],
     )
 
 
@@ -246,8 +249,9 @@ def mi_sesion(usuaria: dict = Depends(usuaria_actual)):
     """Valida que el token siga vigente (la app lo puede llamar al abrirse)."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT seudonimo, avatar FROM usuarias WHERE id = %s", (usuaria["id"],))
+            cur.execute("SELECT seudonimo, avatar, rol FROM usuarias WHERE id = %s", (usuaria["id"],))
             u = cur.fetchone()
     if u is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
-    return {"usuaria_id": usuaria["id"], "seudonimo": u["seudonimo"], "avatar": u["avatar"], "modo": usuaria["modo"]}
+    return {"usuaria_id": usuaria["id"], "seudonimo": u["seudonimo"], "avatar": u["avatar"],
+            "modo": usuaria["modo"], "rol": u["rol"]}

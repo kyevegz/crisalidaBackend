@@ -24,7 +24,8 @@ def usuaria_actual(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer))
     datos = _datos_token(cred)
     if datos.get("modo") not in ("normal", "camuflaje"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
-    return {"id": datos["sub"], "modo": datos["modo"]}
+    # Los tokens emitidos antes del rol no lo traen: todas esas cuentas eran vendedoras
+    return {"id": datos["sub"], "modo": datos["modo"], "rol": datos.get("rol", "vendedora")}
 
 
 def usuaria_modo_normal(usuaria: dict = Depends(usuaria_actual)) -> dict:
