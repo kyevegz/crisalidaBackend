@@ -62,11 +62,12 @@ HASH_FALSO = hashear_pin("000000")
 
 # ---------------------------------------------------------------- JWT
 
-def crear_token(usuaria_id: str, modo: str) -> str:
+def crear_token(usuaria_id: str, modo: str, rol: str = "vendedora") -> str:
     ahora = datetime.now(timezone.utc)
     payload = {
         "sub": usuaria_id,
         "modo": modo,  # "normal" o "camuflaje"
+        "rol": rol,    # "vendedora" o "compradora"
         "iat": ahora,
         "exp": ahora + timedelta(hours=JWT_HORAS),
     }
