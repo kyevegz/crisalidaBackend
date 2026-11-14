@@ -1,7 +1,7 @@
 import os
 import re
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from psycopg2 import errors as pg_errors
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -22,7 +22,15 @@ from marketplace import router as marketplace_router
 from progreso import router as progreso_router
 from publicaciones import router as publicaciones_router
 from retos import router as retos_router
-from seguridad import HASH_FALSO, crear_token, crear_token_registro, hashear_pin, verificar_pin
+from seguridad import (
+    HASH_FALSO,
+    crear_token,
+    crear_token_registro,
+    generar_codigo_recuperacion,
+    hashear_codigo,
+    hashear_pin,
+    verificar_pin,
+)
 
 app = FastAPI(title="API Crisálida", version="0.1.0")
 app.include_router(radar_router)   # /radar/...
@@ -96,6 +104,13 @@ class SesionOut(BaseModel):
     rol: str = "vendedora"   # "vendedora" o "compradora"
     aviso_version: str = AVISO_VERSION   # versión vigente del aviso
     aviso_pendiente: bool = False        # True: la app debe mostrar el aviso y llamar a /auth/aceptar-aviso
+
+
+class RegistroOut(SesionOut):
+    """Respuesta del registro: igual que un login, más el código de recuperación del PIN.
+    Es la ÚNICA vez que el servidor lo entrega (después solo existe su hash): la app debe
+    mostrarlo en ese momento y no puede volver a pedirlo."""
+    codigo_recuperacion: str
 
 
 ROLES = ("vendedora", "compradora")
@@ -178,10 +193,11 @@ def validar_registro(datos: RegistroIn):
     return TokenRegistroOut(token_registro=crear_token_registro(datos.seudonimo))
 
 
-@app.post("/auth/registro-completo", response_model=SesionOut, status_code=status.HTTP_201_CREATED)
-def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_registro)):
+@app.post("/auth/registro-completo", response_model=RegistroOut, status_code=status.HTTP_201_CREATED)
+def registrar_completo(datos: RegistroCompletoIn, response: Response, sesion: dict = Depends(sesion_registro)):
     """Paso final: crea usuaria + mascota (+ perfil del radar, solo la vendedora) en UNA transacción.
-    Si algo falla no queda nada a medias."""
+    Si algo falla no queda nada a medias. Devuelve también el código de recuperación del PIN,
+    que se muestra una sola vez (en la base solo se guarda su hash)."""
     # El pase se emitió para un seudónimo concreto: no se puede usar para registrar otro
     if sesion["id"].lower() != datos.seudonimo.lower():
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Sesión de registro inválida")
@@ -189,6 +205,8 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
     # Todo lo pesado (hash de PIN) y la validación van ANTES de pedir la conexión
     pin_hash = hashear_pin(datos.pin)
     camuflaje_hash = hashear_pin(datos.pin_camuflaje)
+    codigo = generar_codigo_recuperacion()
+    codigo_hash = hashear_codigo(codigo)
     radar = datos.radar   # None si es compradora (el modelo ya lo validó)
     if radar is not None:
         respuestas = limpiar_respuestas(radar.respuestas)
@@ -199,11 +217,12 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO usuarias (seudonimo, pin_hash, pin_camuflaje_hash, rol)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO usuarias (seudonimo, pin_hash, pin_camuflaje_hash, rol,
+                                          codigo_recuperacion_hash, codigo_recuperacion_creado_en)
+                    VALUES (%s, %s, %s, %s, %s, now())
                     RETURNING id, seudonimo, avatar, rol
                     """,
-                    (datos.seudonimo, pin_hash, camuflaje_hash, datos.rol),
+                    (datos.seudonimo, pin_hash, camuflaje_hash, datos.rol, codigo_hash),
                 )
                 usuaria = cur.fetchone()
                 # C1-01: cada usuaria nace con su mascota (relación 1:1)...
@@ -224,13 +243,16 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
             raise
 
     uid = str(usuaria["id"])
-    return SesionOut(
+    # Esta respuesta lleva el código en claro: que ningún proxy ni navegador la guarde
+    response.headers["Cache-Control"] = "no-store"
+    return RegistroOut(
         usuaria_id=uid,
         seudonimo=usuaria["seudonimo"],
         avatar=usuaria["avatar"],
         modo="normal",
         token=crear_token(uid, "normal", usuaria["rol"]),
         rol=usuaria["rol"],
+        codigo_recuperacion=codigo,
     )
 
 

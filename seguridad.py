@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -51,6 +52,42 @@ def hashear_pin(pin: str) -> str:
 def verificar_pin(pin: str, hash_guardado: str) -> bool:
     try:
         return bcrypt.checkpw(_preparar_pin(pin), hash_guardado.encode())
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------- CÓDIGO DE RECUPERACIÓN
+# Sirve para recuperar el PIN si se olvida. Se genera una sola vez (al registrarse), se le muestra
+# a la usuaria y en la base solo queda su hash, igual que el PIN.
+# Alfabeto de 32 caracteres sin los que se confunden al copiarlos a mano (0/O, 1/I): con 6
+# caracteres hay 32^6 = más de mil millones de combinaciones, mucho más que un PIN de 6 dígitos.
+
+ALFABETO_CODIGO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+LONGITUD_CODIGO = 6
+
+
+def generar_codigo_recuperacion() -> str:
+    # secrets usa el generador criptográfico del sistema (random NO sirve para esto)
+    return "".join(secrets.choice(ALFABETO_CODIGO) for _ in range(LONGITUD_CODIGO))
+
+
+def normalizar_codigo(codigo: str) -> str:
+    """Tolera mayúsculas/minúsculas, espacios y guiones al escribirlo ('k7m-3qx' = 'K7M3QX')."""
+    return codigo.upper().replace(" ", "").replace("-", "")
+
+
+def _preparar_codigo(codigo: str) -> bytes:
+    # El prefijo hace que el hash de un código nunca coincida con el de un PIN
+    return _preparar_pin("recuperacion:" + normalizar_codigo(codigo))
+
+
+def hashear_codigo(codigo: str) -> str:
+    return bcrypt.hashpw(_preparar_codigo(codigo), bcrypt.gensalt(rounds=12)).decode()
+
+
+def verificar_codigo(codigo: str, hash_guardado: str) -> bool:
+    try:
+        return bcrypt.checkpw(_preparar_codigo(codigo), hash_guardado.encode())
     except ValueError:
         return False
 
