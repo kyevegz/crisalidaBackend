@@ -227,6 +227,12 @@ def iniciar_sesion(datos: LoginIn):
                 "UPDATE usuarias SET intentos_fallidos = 0, bloqueada_hasta = NULL WHERE id = %s",
                 (u["id"],),
             )
+            # Solo en modo normal: en camuflaje no se usa la app de verdad
+            if modo == "normal":
+                cur.execute(
+                    "UPDATE mascotas SET ultima_actividad = now() WHERE usuaria_id = %s",
+                    (u["id"],),
+                )
         conn.commit()
 
     uid = str(u["id"])
@@ -246,6 +252,12 @@ def mi_sesion(usuaria: dict = Depends(usuaria_actual)):
         with conn.cursor() as cur:
             cur.execute("SELECT seudonimo, avatar FROM usuarias WHERE id = %s", (usuaria["id"],))
             u = cur.fetchone()
+            if u is not None and usuaria["modo"] == "normal":
+                cur.execute(
+                    "UPDATE mascotas SET ultima_actividad = now() WHERE usuaria_id = %s",
+                    (usuaria["id"],),
+                )
+        conn.commit()
     if u is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
     return {"usuaria_id": usuaria["id"], "seudonimo": u["seudonimo"], "avatar": u["avatar"], "modo": usuaria["modo"]}
