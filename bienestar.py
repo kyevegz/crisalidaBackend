@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from db import obtener_conexion
-from dependencias import usuaria_modo_normal
+from dependencias import usuaria_vendedora
 from seguridad import cifrar_texto, descifrar_texto
 
 router = APIRouter(prefix="/bienestar", tags=["Bienestar"])
@@ -82,29 +82,29 @@ def _guardar(uid, subtipo: str, columnas: dict) -> dict:
 
 
 @router.post("/emocion")
-def guardar_emocion(datos: EmocionIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def guardar_emocion(datos: EmocionIn, usuaria: dict = Depends(usuaria_vendedora)):
     return _guardar(usuaria["id"], "emocion", {"emocion": datos.emocion.strip()})
 
 
 @router.post("/monitoreo")
-def guardar_monitoreo(datos: MonitoreoIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def guardar_monitoreo(datos: MonitoreoIn, usuaria: dict = Depends(usuaria_vendedora)):
     return _guardar(usuaria["id"], "monitoreo",
                     {"tension": datos.tension, "claridad": datos.claridad, "energia": datos.energia})
 
 
 @router.post("/reflexion")
-def guardar_reflexion(datos: ReflexionIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def guardar_reflexion(datos: ReflexionIn, usuaria: dict = Depends(usuaria_vendedora)):
     return _guardar(usuaria["id"], "reflexion",
                     {"texto_cifrado": cifrar_texto(json.dumps(datos.respuestas, ensure_ascii=False))})
 
 
 @router.post("/bitacora")
-def guardar_bitacora(datos: BitacoraIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def guardar_bitacora(datos: BitacoraIn, usuaria: dict = Depends(usuaria_vendedora)):
     return _guardar(usuaria["id"], "bitacora", {"texto_cifrado": cifrar_texto(datos.texto)})
 
 
 @router.get("/hoy")
-def hoy(usuaria: dict = Depends(usuaria_modo_normal)):
+def hoy(usuaria: dict = Depends(usuaria_vendedora)):
     """Qué bloques ya dieron flores hoy (para mostrar «🌸 flores ganadas hoy») y cuántos registros lleva."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
@@ -141,7 +141,7 @@ def _abrir(valor: str | None):
 def listar_entradas(subtipo: Literal["emocion", "monitoreo", "reflexion", "bitacora"] = Query("emocion"),
                     limite: int = Query(50, ge=1, le=100),
                     desde: int = Query(0, ge=0),
-                    usuaria: dict = Depends(usuaria_modo_normal)):
+                    usuaria: dict = Depends(usuaria_vendedora)):
     """Historial de UN bloque, lo más reciente primero (solo la propia usuaria lo ve)."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
@@ -172,7 +172,7 @@ def listar_entradas(subtipo: Literal["emocion", "monitoreo", "reflexion", "bitac
 
 
 @router.delete("/entradas/{entrada_id}")
-def borrar_entrada(entrada_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
+def borrar_entrada(entrada_id: str, usuaria: dict = Depends(usuaria_vendedora)):
     """Borra un registro. Las flores que ya se ganaron se conservan."""
     with obtener_conexion() as conn:
         try:

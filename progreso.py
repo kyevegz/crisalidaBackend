@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
 from db import obtener_conexion
-from dependencias import usuaria_modo_normal
+from dependencias import usuaria_vendedora
 
 router = APIRouter(tags=["Progreso"])
 
@@ -100,7 +100,7 @@ def calcular_progreso(cur, uid) -> dict:
 
 
 @router.get("/progreso/yo")
-def mi_progreso(usuaria: dict = Depends(usuaria_modo_normal)):
+def mi_progreso(usuaria: dict = Depends(usuaria_vendedora)):
     """Todo lo que necesitan Inicio, Perfil y Mascota en una sola llamada."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
@@ -108,7 +108,7 @@ def mi_progreso(usuaria: dict = Depends(usuaria_modo_normal)):
 
 
 @router.get("/progreso/niveles")
-def lista_niveles(usuaria: dict = Depends(usuaria_modo_normal)):
+def lista_niveles(usuaria: dict = Depends(usuaria_vendedora)):
     """Los 10 niveles y las 3 etapas de Lilu (para mostrar el mapa completo)."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
@@ -120,7 +120,7 @@ def lista_niveles(usuaria: dict = Depends(usuaria_modo_normal)):
 
 
 @router.get("/progreso/reglas")
-def reglas_de_flores(usuaria: dict = Depends(usuaria_modo_normal)):
+def reglas_de_flores(usuaria: dict = Depends(usuaria_vendedora)):
     """Cuántas flores da cada acción (así los textos de la app nunca se desfasan de la base)."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
@@ -141,7 +141,7 @@ class AvatarIn(BaseModel):
 
 
 @router.put("/perfil/avatar")
-def cambiar_avatar(datos: AvatarIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def cambiar_avatar(datos: AvatarIn, usuaria: dict = Depends(usuaria_vendedora)):
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:

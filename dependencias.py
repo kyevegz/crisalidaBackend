@@ -35,11 +35,31 @@ def usuaria_modo_normal(usuaria: dict = Depends(usuaria_actual)) -> dict:
     return usuaria
 
 
+def exigir_rol(*roles: str):
+    """Fabrica una dependencia que solo deja pasar a las cuentas (modo normal) con alguno de estos roles.
+    Si el rol no coincide responde 403. Se usa así:  usuaria: dict = Depends(usuaria_vendedora)"""
+    def dependencia(usuaria: dict = Depends(usuaria_modo_normal)) -> dict:
+        if usuaria["rol"] not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
+        return usuaria
+    return dependencia
+
+
+# Funciones de la vendedora: bienestar, mascota (Lilu), portafolio, radar y retos propios
+usuaria_vendedora = exigir_rol("vendedora")
+# Funciones exclusivas de la compradora (se usarán en las etapas siguientes)
+usuaria_compradora = exigir_rol("compradora")
+
+
 def sesion_radar(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer)) -> dict:
     """El radar lo usa una usuaria ya registrada (modo normal) O una persona que está
     en pleno registro (pase temporal 'registro', todavía sin cuenta)."""
     datos = _datos_token(cred)
     if datos.get("modo") not in ("normal", "registro"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
+    # El radar es de la vendedora: una compradora ya registrada no lo usa
+    # (el pase 'registro' todavía no tiene rol: la persona aún no tiene cuenta)
+    if datos["modo"] == "normal" and datos.get("rol", "vendedora") != "vendedora":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
     return {"id": datos["sub"], "modo": datos["modo"]}
 

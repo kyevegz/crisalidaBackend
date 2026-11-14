@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 import radar_logica as rl
 from db import obtener_conexion
-from dependencias import usuaria_modo_normal
+from dependencias import usuaria_vendedora
 from marketplace import formatear
 from seguridad import cifrar_texto, descifrar_texto
 
@@ -76,7 +76,7 @@ class EstadoIn(BaseModel):
 
 
 @router.post("/publicaciones", status_code=status.HTTP_201_CREATED)
-def publicar(datos: PublicacionIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def publicar(datos: PublicacionIn, usuaria: dict = Depends(usuaria_vendedora)):
     uid = usuaria["id"]
     estado = "activo" if AUTOAPROBAR else "en_revision"
     punto = cifrar_texto(datos.punto_entrega) if datos.punto_entrega and datos.punto_entrega.strip() else None
@@ -112,7 +112,7 @@ def publicar(datos: PublicacionIn, usuaria: dict = Depends(usuaria_modo_normal))
 
 
 @router.get("/publicaciones/mias")
-def mi_portafolio(usuaria: dict = Depends(usuaria_modo_normal)):
+def mi_portafolio(usuaria: dict = Depends(usuaria_vendedora)):
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -148,7 +148,7 @@ def mi_portafolio(usuaria: dict = Depends(usuaria_modo_normal)):
 
 
 @router.put("/publicaciones/{publicacion_id}")
-def editar(publicacion_id: str, datos: PublicacionIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def editar(publicacion_id: str, datos: PublicacionIn, usuaria: dict = Depends(usuaria_vendedora)):
     """Edita los detalles de una publicación propia. El tipo (producto/servicio) no se puede cambiar.
     Si estaba activa y no es modo demo, vuelve a revisión porque el contenido cambió."""
     punto = cifrar_texto(datos.punto_entrega) if datos.punto_entrega and datos.punto_entrega.strip() else None
@@ -190,7 +190,7 @@ def editar(publicacion_id: str, datos: PublicacionIn, usuaria: dict = Depends(us
 
 
 @router.delete("/publicaciones/{publicacion_id}/imagenes/{imagen_id}")
-def borrar_imagen(publicacion_id: str, imagen_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
+def borrar_imagen(publicacion_id: str, imagen_id: str, usuaria: dict = Depends(usuaria_vendedora)):
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:
@@ -210,7 +210,7 @@ def borrar_imagen(publicacion_id: str, imagen_id: str, usuaria: dict = Depends(u
 
 
 @router.patch("/publicaciones/{publicacion_id}/estado")
-def pausar_o_reactivar(publicacion_id: str, datos: EstadoIn, usuaria: dict = Depends(usuaria_modo_normal)):
+def pausar_o_reactivar(publicacion_id: str, datos: EstadoIn, usuaria: dict = Depends(usuaria_vendedora)):
     origen = "pausado" if datos.estado == "activo" else "activo"
     with obtener_conexion() as conn:
         try:
@@ -242,7 +242,7 @@ def _tipo_imagen(b: bytes) -> str | None:
 
 
 @router.post("/publicaciones/{publicacion_id}/imagenes", status_code=status.HTTP_201_CREATED)
-async def subir_imagen(publicacion_id: str, request: Request, usuaria: dict = Depends(usuaria_modo_normal)):
+async def subir_imagen(publicacion_id: str, request: Request, usuaria: dict = Depends(usuaria_vendedora)):
     """El cuerpo de la petición ES la imagen (JPEG/PNG/WebP, máx. 400 KB; la app la comprime antes)."""
     declarado = request.headers.get("content-length")
     if declarado and declarado.isdigit() and int(declarado) > MAX_FOTO_BYTES:

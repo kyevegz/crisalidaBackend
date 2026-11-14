@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import radar_logica as rl
 from db import obtener_conexion
-from dependencias import sesion_radar, usuaria_modo_normal
+from dependencias import sesion_radar, usuaria_vendedora
 from seguridad import cifrar_texto
 
 router = APIRouter(prefix="/radar", tags=["Radar de talentos"])
@@ -205,7 +205,7 @@ def finalizar(datos: FinalizarIn, sesion: dict = Depends(sesion_radar)):
 
 
 @router.get("/resultado")
-def obtener_resultado(usuaria: dict = Depends(usuaria_modo_normal)):
+def obtener_resultado(usuaria: dict = Depends(usuaria_vendedora)):
     """El perfil ya calculado (para mostrarlo en la pantalla de Perfil, RF-03)."""
     uid = usuaria["id"]
     with obtener_conexion() as conn:
