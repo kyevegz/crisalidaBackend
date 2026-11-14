@@ -90,9 +90,24 @@ class SesionOut(BaseModel):
     rol: str = "vendedora"   # "vendedora" o "compradora"
 
 
+ROLES = ("vendedora", "compradora")
+
+
 class RegistroCompletoIn(RegistroIn):
-    """Credenciales + radar completo, todo junto: la cuenta se crea hasta terminar el radar."""
-    radar: RadarCompletoIn
+    """Credenciales + rol. La vendedora manda además el radar completo (la cuenta se crea hasta
+    terminarlo); la compradora no pasa por el radar. El rol es obligatorio: no se asume ninguno."""
+    rol: str | None = None
+    radar: RadarCompletoIn | None = None
+
+    @model_validator(mode="after")
+    def _rol_y_radar(self):
+        if self.rol not in ROLES:
+            raise ValueError("Indica con qué rol te registras: 'vendedora' o 'compradora'")
+        if self.rol == "vendedora" and self.radar is None:
+            raise ValueError("La vendedora debe completar el radar para terminar su registro")
+        if self.rol == "compradora" and self.radar is not None:
+            raise ValueError("La compradora no completa el radar")
+        return self
 
 
 class TokenRegistroOut(BaseModel):
@@ -133,7 +148,7 @@ def validar_registro(datos: RegistroIn):
 
 @app.post("/auth/registro-completo", response_model=SesionOut, status_code=status.HTTP_201_CREATED)
 def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_registro)):
-    """Paso final (segundo "Terminar" del radar): crea usuaria + mascota + perfil en UNA transacción.
+    """Paso final: crea usuaria + mascota (+ perfil del radar, solo la vendedora) en UNA transacción.
     Si algo falla no queda nada a medias."""
     # El pase se emitió para un seudónimo concreto: no se puede usar para registrar otro
     if sesion["id"].lower() != datos.seudonimo.lower():
@@ -142,26 +157,28 @@ def registrar_completo(datos: RegistroCompletoIn, sesion: dict = Depends(sesion_
     # Todo lo pesado (hash de PIN) y la validación van ANTES de pedir la conexión
     pin_hash = hashear_pin(datos.pin)
     camuflaje_hash = hashear_pin(datos.pin_camuflaje)
-    radar = datos.radar
-    respuestas = limpiar_respuestas(radar.respuestas)
-    perfil = perfil_desde_cliente(radar.perfil, radar.actividades)
+    radar = datos.radar   # None si es compradora (el modelo ya lo validó)
+    if radar is not None:
+        respuestas = limpiar_respuestas(radar.respuestas)
+        perfil = perfil_desde_cliente(radar.perfil, radar.actividades)
 
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO usuarias (seudonimo, pin_hash, pin_camuflaje_hash)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO usuarias (seudonimo, pin_hash, pin_camuflaje_hash, rol)
+                    VALUES (%s, %s, %s, %s)
                     RETURNING id, seudonimo, avatar, rol
                     """,
-                    (datos.seudonimo, pin_hash, camuflaje_hash),
+                    (datos.seudonimo, pin_hash, camuflaje_hash, datos.rol),
                 )
                 usuaria = cur.fetchone()
                 # C1-01: cada usuaria nace con su mascota (relación 1:1)...
                 cur.execute("INSERT INTO mascotas (usuaria_id) VALUES (%s)", (usuaria["id"],))
-                # ...y con su perfil inicial (RF-03), todo en la misma transacción
-                guardar_perfil(cur, usuaria["id"], radar.actividades, radar.tiempo, respuestas, perfil)
+                # ...y la vendedora con su perfil inicial del radar (RF-03), todo en la misma transacción
+                if radar is not None:
+                    guardar_perfil(cur, usuaria["id"], radar.actividades, radar.tiempo, respuestas, perfil)
             conn.commit()
         except pg_errors.UniqueViolation:
             conn.rollback()
