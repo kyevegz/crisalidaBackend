@@ -26,6 +26,7 @@ Córrelas en este orden, completas, en el editor SQL de Neon (o con `psql`):
 | 006 | `006_frases_apoyo.sql` |	Tabla de frases de apoyo (Respira con Lilu) con las 25 frases iniciales (se puede repetir sin duplicar) |
 | 007 | `007_rol_usuarias.sql` | Columna `rol` de usuarias (`vendedora` o `compradora`); las cuentas existentes quedan como `vendedora` (se puede repetir sin problema)
 | 008 | `008_aceptaciones_aviso.sql` | Tabla `aceptaciones_aviso`: fecha y versión del aviso de privacidad que acepta cada usuaria (se puede repetir sin problema) |
+| 009 | `009_correo_y_ubicacion.sql` | Columnas correo, correo verificado, municipio y localidad de usuarias, y la tabla `verificaciones_correo` (se puede repetir sin problema) |
 
 Notas:
 - `002` **no** va dentro de una transacción (no tiene `BEGIN/COMMIT`). Si falla a la mitad, revisa qué alcanzó a crear antes de repetirla.

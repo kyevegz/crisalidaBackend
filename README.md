@@ -99,6 +99,7 @@ cada entorno**.
 | `BREVO_API_KEY` | vacío | Llave de la API de Brevo para enviar correos. Sin ella no se envía ningún correo (la app sigue funcionando). |
 | `CORREO_REMITENTE` | vacío | Correo desde el que se envía, verificado en Brevo. Sin él no se envían correos. |
 | `CORREO_NOMBRE_REMITENTE` | `Crisálida` | Nombre que ven las usuarias como remitente. |
+| `CORREO_CODIGO_MINUTOS` | `15` | Minutos que dura el código de verificación que se manda al correo de la usuaria. |
 | `GEMINI_API_KEY` | vacío | Llave de Google AI Studio para el radar de talentos. Sin ella el radar usa un banco de preguntas de respaldo. |
 | `GEMINI_MODEL` | `gemini-flash-latest` | Nombre exacto del modelo de Gemini (uno Flash o Flash-Lite marcado como gratuito en AI Studio). |
 | `AUTOAPROBAR_PUBLICACIONES` | `false` | Con `true`, las publicaciones nuevas se aprueban solas (útil para demostraciones). Con `false` quedan "en revisión". |
@@ -110,6 +111,7 @@ cada entorno**.
 |---|---|
 | `main.py` | La aplicación, el registro y el inicio de sesión. |
 | `seguridad.py` | PIN, tokens y cifrado. |
+| `datos_personales.py` | Correo (con verificación), municipio y localidad de la usuaria. |
 | `correo.py` | Envío de correos con Brevo. Prueba: `python correo.py tu_correo@ejemplo.com`. |
 | `dependencias.py` | Quién puede entrar a cada endpoint (modo normal, camuflaje, registro). |
 | `db.py` | Conexión a la base de datos. |
