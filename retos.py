@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from psycopg2 import errors as pg_errors
 
 from db import obtener_conexion
-from dependencias import usuaria_modo_normal
+from dependencias import usuaria_modo_normal, usuaria_vendedora
 
 router = APIRouter(prefix="/retos", tags=["Microrretos"])
 
@@ -56,7 +56,7 @@ def tablero(categoria_id: int | None = Query(None),
 
 
 @router.get("/mis")
-def mis_retos(usuaria: dict = Depends(usuaria_modo_normal)):
+def mis_retos(usuaria: dict = Depends(usuaria_vendedora)):
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -110,7 +110,7 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
 
 
 @router.post("/{reto_id}/aceptar", status_code=status.HTTP_201_CREATED)
-def aceptar(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
+def aceptar(reto_id: str, usuaria: dict = Depends(usuaria_vendedora)):
     uid = usuaria["id"]
     with obtener_conexion() as conn:
         try:
@@ -145,7 +145,7 @@ def aceptar(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
 
 
 @router.post("/aceptaciones/{aceptacion_id}/entregar")
-def entregar(aceptacion_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
+def entregar(aceptacion_id: str, usuaria: dict = Depends(usuaria_vendedora)):
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:
@@ -165,7 +165,7 @@ def entregar(aceptacion_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
 
 
 @router.post("/aceptaciones/{aceptacion_id}/abandonar")
-def abandonar(aceptacion_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
+def abandonar(aceptacion_id: str, usuaria: dict = Depends(usuaria_vendedora)):
     """Soltar un reto sin entregarlo: vuelve al tablero para otra persona."""
     with obtener_conexion() as conn:
         try:

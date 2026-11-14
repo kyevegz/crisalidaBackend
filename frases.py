@@ -6,7 +6,7 @@ pocas al azar, solo activas, según el estado de Lilu: 'normal' o 'reposo'.
 from fastapi import APIRouter, Depends
 
 from db import obtener_conexion
-from dependencias import usuaria_modo_normal
+from dependencias import usuaria_vendedora
 from progreso import REPOSO_DIAS
 
 router = APIRouter(tags=["Frases"])
@@ -15,7 +15,7 @@ CANTIDAD = 5  # cuántas frases devuelve cada vez (variadas, no toda la tabla)
 
 
 @router.get("/frases-apoyo")
-def frases_de_apoyo(usuaria: dict = Depends(usuaria_modo_normal)):
+def frases_de_apoyo(usuaria: dict = Depends(usuaria_vendedora)):
     """Estado de Lilu: 'reposo' si en REPOSO_DIAS días no hubo ninguna actividad
     (bienestar, reto, publicación o venta); si no, 'normal'. Iniciar sesión no cuenta."""
     with obtener_conexion() as conn:
