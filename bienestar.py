@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from db import obtener_conexion
 from dependencias import usuaria_vendedora
+from idempotencia import clave_idempotencia, guardar_respuesta, reservar
 from seguridad import cifrar_texto, descifrar_texto
 
 router = APIRouter(prefix="/bienestar", tags=["Bienestar"])
@@ -54,12 +55,18 @@ class BitacoraIn(BaseModel):
         return v
 
 
-def _guardar(uid, subtipo: str, columnas: dict) -> dict:
-    """Inserta un registro NUEVO y, si es el primero del día en ese bloque, da las flores."""
+def _guardar(uid, subtipo: str, columnas: dict, clave: str | None = None) -> dict:
+    """Inserta un registro NUEVO y, si es el primero del día en ese bloque, da las flores.
+    Con `clave` (Idempotency-Key): si ya se guardó con esa clave, devuelve lo mismo sin guardar otra vez."""
     nombres = list(columnas)
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:
+                if clave:
+                    previo = reservar(cur, uid, clave, f"bienestar_{subtipo}")
+                    if previo is not None:
+                        conn.commit()
+                        return previo
                 cur.execute(
                     f"""INSERT INTO bienestar_entradas (usuaria_id, subtipo, {", ".join(nombres)})
                         VALUES (%s, %s, {", ".join(["%s"] * len(nombres))}) RETURNING id""",
@@ -74,33 +81,40 @@ def _guardar(uid, subtipo: str, columnas: dict) -> dict:
                     (uid, subtipo, f"bienestar_{subtipo}"),
                 )
                 ev = cur.fetchone()
+                resultado = {"id": str(nueva["id"]), "flores_ganadas": ev["flores"] if ev else 0, "ya_registrado_hoy": ev is None}
+                if clave:
+                    guardar_respuesta(cur, uid, clave, resultado)
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-    return {"id": str(nueva["id"]), "flores_ganadas": ev["flores"] if ev else 0, "ya_registrado_hoy": ev is None}
+    return resultado
 
 
 @router.post("/emocion")
-def guardar_emocion(datos: EmocionIn, usuaria: dict = Depends(usuaria_vendedora)):
-    return _guardar(usuaria["id"], "emocion", {"emocion": datos.emocion.strip()})
+def guardar_emocion(datos: EmocionIn, usuaria: dict = Depends(usuaria_vendedora),
+                    clave: str | None = Depends(clave_idempotencia)):
+    return _guardar(usuaria["id"], "emocion", {"emocion": datos.emocion.strip()}, clave)
 
 
 @router.post("/monitoreo")
-def guardar_monitoreo(datos: MonitoreoIn, usuaria: dict = Depends(usuaria_vendedora)):
+def guardar_monitoreo(datos: MonitoreoIn, usuaria: dict = Depends(usuaria_vendedora),
+                      clave: str | None = Depends(clave_idempotencia)):
     return _guardar(usuaria["id"], "monitoreo",
-                    {"tension": datos.tension, "claridad": datos.claridad, "energia": datos.energia})
+                    {"tension": datos.tension, "claridad": datos.claridad, "energia": datos.energia}, clave)
 
 
 @router.post("/reflexion")
-def guardar_reflexion(datos: ReflexionIn, usuaria: dict = Depends(usuaria_vendedora)):
+def guardar_reflexion(datos: ReflexionIn, usuaria: dict = Depends(usuaria_vendedora),
+                      clave: str | None = Depends(clave_idempotencia)):
     return _guardar(usuaria["id"], "reflexion",
-                    {"texto_cifrado": cifrar_texto(json.dumps(datos.respuestas, ensure_ascii=False))})
+                    {"texto_cifrado": cifrar_texto(json.dumps(datos.respuestas, ensure_ascii=False))}, clave)
 
 
 @router.post("/bitacora")
-def guardar_bitacora(datos: BitacoraIn, usuaria: dict = Depends(usuaria_vendedora)):
-    return _guardar(usuaria["id"], "bitacora", {"texto_cifrado": cifrar_texto(datos.texto)})
+def guardar_bitacora(datos: BitacoraIn, usuaria: dict = Depends(usuaria_vendedora),
+                     clave: str | None = Depends(clave_idempotencia)):
+    return _guardar(usuaria["id"], "bitacora", {"texto_cifrado": cifrar_texto(datos.texto)}, clave)
 
 
 @router.get("/hoy")

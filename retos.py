@@ -7,6 +7,7 @@ from psycopg2 import errors as pg_errors
 
 from db import obtener_conexion
 from dependencias import usuaria_modo_normal, usuaria_vendedora
+from idempotencia import clave_idempotencia, guardar_respuesta, reservar
 
 router = APIRouter(prefix="/retos", tags=["Microrretos"])
 
@@ -145,17 +146,31 @@ def aceptar(reto_id: str, usuaria: dict = Depends(usuaria_vendedora)):
 
 
 @router.post("/aceptaciones/{aceptacion_id}/entregar")
-def entregar(aceptacion_id: str, usuaria: dict = Depends(usuaria_vendedora)):
+def entregar(aceptacion_id: str, response: Response, usuaria: dict = Depends(usuaria_vendedora),
+             clave: str | None = Depends(clave_idempotencia)):
+    """Entrega un reto. Con Idempotency-Key, un reenvío devuelve lo mismo en lugar de un 404."""
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:
+                if clave:
+                    previo = reservar(cur, usuaria["id"], clave, f"entregar:{aceptacion_id}")
+                    if previo is not None:
+                        conn.commit()
+                        response.headers["Idempotent-Replay"] = "true"
+                        return previo
                 cur.execute(
                     """UPDATE reto_aceptaciones SET estado = 'entregado', entregado_en = now()
                         WHERE id::text = %s AND usuaria_id = %s AND estado = 'aceptado' RETURNING id""",
                     (aceptacion_id, usuaria["id"]),
                 )
                 ok = cur.fetchone()
-            conn.commit()
+                if ok is not None and clave:
+                    guardar_respuesta(cur, usuaria["id"], clave, {"estado": "entregado"})
+            # si no se encontró, rollback: la clave NO se queda reservada y el reintento puede volver a intentar
+            if ok is None:
+                conn.rollback()
+            else:
+                conn.commit()
         except Exception:
             conn.rollback()
             raise
