@@ -14,6 +14,7 @@ from radar import (
     perfil_desde_cliente,
     router as radar_router,
 )
+from admin import router as admin_router
 from bienestar import router as bienestar_router
 from cambio_rol import router as cambio_rol_router
 from cuenta import router as cuenta_router
@@ -54,6 +55,7 @@ app.include_router(recuperacion_router)    # /auth/recuperar/...
 app.include_router(reportes_router)        # /reportes, /bloqueos
 app.include_router(cuenta_router)          # /cuenta/estado, /cuenta/suspender, /cuenta/reactivar
 app.include_router(cambio_rol_router)      # /cuenta/rol
+app.include_router(admin_router)           # /admin/retos/... (solo el equipo, con X-Admin-Key)
 if MODO_DEMO:                              # atajos para la presentación (apagados por defecto)
     app.include_router(demo_router)        # /demo/...
 

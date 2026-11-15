@@ -27,6 +27,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from psycopg2 import errors as pg_errors
 from pydantic import BaseModel, field_validator, model_validator
 
+from avisos import avisar_publicadora
 from correo import enviar_correo
 from db import obtener_conexion
 from dependencias import usuaria_modo_normal
@@ -35,6 +36,7 @@ log = logging.getLogger("crisalida.reportes")
 router = APIRouter(tags=["Reportes y bloqueos"])
 
 MAX_REPORTES_DIA = 20
+REPORTES_PARA_OCULTAR = 3   # reportes distintos a un reto abierto para que pase a revisión (se oculta solo)
 
 # Los textos son los del diseño del reporte; la app los puede pedir en GET /reportes/motivos
 MOTIVOS = {
@@ -152,6 +154,7 @@ def reportar(datos: ReporteIn, segundo_plano: BackgroundTasks, usuaria: dict = D
     publicacion_id = reto_id = reportada_id = None
     titulo = reportada_seudonimo = ""
     bloqueada = False
+    reto_oculto = False
 
     with obtener_conexion() as conn:
         try:
@@ -203,6 +206,16 @@ def reportar(datos: ReporteIn, segundo_plano: BackgroundTasks, usuaria: dict = D
                                    ON CONFLICT DO NOTHING""", (uid, reportada_id))
                     bloqueada = True
 
+                # Un reto abierto con varios reportes (de personas distintas, cuenta solo los posteriores a su última
+                # revisión) vuelve a 'en_revision': deja de verse hasta que el equipo lo revise.
+                if datos.tipo == "reto":
+                    cur.execute("""UPDATE retos SET estado = 'en_revision'
+                                    WHERE id = %s AND estado = 'abierto'
+                                      AND (SELECT count(*) FROM reportes x WHERE x.reto_id = retos.id AND x.tipo = 'reto'
+                                              AND x.creado_en > COALESCE(retos.revisado_en, '-infinity')) >= %s
+                                RETURNING id""", (reto_id, REPORTES_PARA_OCULTAR))
+                    reto_oculto = cur.fetchone() is not None
+
                 cur.execute("SELECT seudonimo FROM usuarias WHERE id = %s", (uid,))
                 reportante = cur.fetchone()["seudonimo"]
             conn.commit()
@@ -214,7 +227,8 @@ def reportar(datos: ReporteIn, segundo_plano: BackgroundTasks, usuaria: dict = D
             raise
 
     objetivo = {"publicacion": "Publicación", "reto": "Reto", "usuaria": "Usuaria"}[datos.tipo]
-    asunto = f"[Crisálida] Reporte #{reporte_id}" + (" · PRIORIDAD ALTA" if prioridad == "alta" else "")
+    asunto = (f"[Crisálida] Reporte #{reporte_id}" + (" · PRIORIDAD ALTA" if prioridad == "alta" else "")
+              + (" · RETO OCULTO" if reto_oculto else ""))
     texto = (
         f"Nuevo reporte #{reporte_id} (prioridad {prioridad})\n\n"
         f"Qué se reporta: {objetivo}\n"
@@ -224,10 +238,18 @@ def reportar(datos: ReporteIn, segundo_plano: BackgroundTasks, usuaria: dict = D
         f"Detalle: {datos.detalle or '(sin detalle)'}\n"
         f"Reportó: {reportante}\n"
         f"Pidió bloquear: {'sí' if bloqueada else 'no'}\n"
-        f"Pidió revisión prioritaria: {'sí' if datos.revision_prioritaria else 'no'}\n\n"
+        f"Pidió revisión prioritaria: {'sí' if datos.revision_prioritaria else 'no'}\n"
+        + ("El reto juntó varios reportes y se OCULTÓ solo hasta que lo revisen (GET /admin/retos/pendientes).\n"
+           if reto_oculto else "")
+        + "\n"
         f"Para revisarlo: SELECT * FROM reportes WHERE id = {reporte_id};"
     )
     segundo_plano.add_task(_enviar_al_equipo, reporte_id, asunto, texto)
+    if reto_oculto and reportada_id is not None:
+        segundo_plano.add_task(
+            avisar_publicadora, reportada_id, "Crisálida: tu reto está en revisión",
+            f"Tu reto «{titulo}» está en revisión y dejó de mostrarse temporalmente. Nuestro equipo lo revisará "
+            "y te avisaremos el resultado.")
 
     return {"id": reporte_id, "bloqueada": bloqueada,
             "mensaje": "Gracias. Recibimos tu reporte y lo revisaremos con cuidado."}
