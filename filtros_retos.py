@@ -36,7 +36,12 @@ _PATRONES = {
         r"https?://|www\.",                                                # enlaces
         r"\b[a-z0-9-]{2,}\.(?:com|mx|net|org|io|me|co|info|xyz|ly|link|app|shop|store|site|online)\b",
         r"(?:\d[\s().\-]*){8,}",                                           # 8 o más dígitos (teléfono)
-        r"\b(?:whats\s?app|wasap|watsap|telegram|instagram|facebook|messenger|tiktok|snapchat|signal|discord)\b",
+        r"\b(?:whats\s?(?:app)?|wats\s?(?:app)?|wasap|watsap|wa|telegram|telegrama|instagram|insta|ig|facebook|fb|messenger|tik\s?tok|snapchat|signal|discord|twitter|x\.com)\b",
+        r"\b(?:mensaje|msj|msg|chat|dm|md|mp)\s+(?:privado|directo|al privado)\b|\b(?:por|al) privado\b",
+        r"\b(?:tu|mi|su|un)\s+(?:numero|num|tel|telefono|celular|cel|movil|whats|correo|email|mail|insta|face|usuario)\b",
+        r"\b(?:hablame|llamame|marcame|textame|pasame tu|dame tu|te paso mi|te dejo mi)\b",
+        r"\bw\W?h\W?a\W?t\W?s\W?a\W?p\W?p\b|\bw\W?a\W?s\W?a\W?p\b|\bi\W?n\W?s\W?t\W?a\W?g\W?r\W?a\W?m\b",
+        r"\b(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)(?: (?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)){5,}\b",   # número dicho con palabras
         r"\b(?:inbox|mensaje directo|llamame|marcame|contactame|escribeme)\b",
         r"\b(?:numero de|mi) (?:telefono|celular|cel|whats|correo|email)\b",
     ],
