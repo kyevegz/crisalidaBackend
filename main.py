@@ -22,13 +22,17 @@ from marketplace import router as marketplace_router
 from progreso import router as progreso_router
 from publicaciones import router as publicaciones_router
 from retos import router as retos_router
+from recuperacion import router as recuperacion_router
 from seguridad import (
     HASH_FALSO,
+    MAX_INTENTOS,
+    MINUTOS_BLOQUEO,
     crear_token,
     crear_token_registro,
     generar_codigo_recuperacion,
     hashear_codigo,
     hashear_pin,
+    validar_pin,
     verificar_pin,
 )
 
@@ -41,14 +45,11 @@ app.include_router(publicaciones_router)   # /publicaciones/..., /imagenes/...
 app.include_router(bienestar_router)       # /bienestar/...
 app.include_router(frases_router)          # /frases-apoyo
 app.include_router(datos_personales_router)  # /perfil/datos, /perfil/correo
+app.include_router(recuperacion_router)    # /auth/recuperar/...
 if MODO_DEMO:                              # atajos para la presentación (apagados por defecto)
     app.include_router(demo_router)        # /demo/...
 
 SEUDONIMO_RE = re.compile(r"^\w{3,30}$")   # letras, números y guion bajo
-PIN_RE = re.compile(r"^\d{6}$")
-PINS_DEBILES = {"123456", "654321", "123123", "121212", "112233", "012345"}
-MAX_INTENTOS = 5          # fallos seguidos antes de bloquear
-MINUTOS_BLOQUEO = 15
 # Versión vigente del aviso de privacidad y términos. Al cambiarla (variable AVISO_VERSION), a todas
 # las usuarias se les pide aceptar de nuevo en su siguiente login.
 AVISO_VERSION = os.getenv("AVISO_VERSION", "1")
@@ -56,14 +57,6 @@ MENSAJE_CREDENCIALES = "Seudónimo o PIN incorrectos"
 
 
 # ============================================================ MODELOS
-
-def _validar_pin(pin: str) -> str:
-    if not PIN_RE.match(pin):
-        raise ValueError("El PIN debe tener exactamente 6 dígitos")
-    if len(set(pin)) == 1 or pin in PINS_DEBILES:
-        raise ValueError("Ese PIN es muy fácil de adivinar, elige otro")
-    return pin
-
 
 class RegistroIn(BaseModel):
     seudonimo: str
@@ -81,7 +74,7 @@ class RegistroIn(BaseModel):
     @field_validator("pin", "pin_camuflaje")
     @classmethod
     def _pins(cls, v: str) -> str:
-        return _validar_pin(v)
+        return validar_pin(v)
 
     @model_validator(mode="after")
     def _pins_distintos(self):
@@ -262,7 +255,7 @@ def iniciar_sesion(datos: LoginIn):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, seudonimo, avatar, rol, pin_hash, pin_camuflaje_hash,
+                SELECT id, seudonimo, avatar, rol, version_sesion, pin_hash, pin_camuflaje_hash,
                        bloqueada_hasta, (bloqueada_hasta IS NOT NULL AND bloqueada_hasta > now()) AS bloqueada
                 FROM usuarias
                 WHERE lower(seudonimo) = lower(%s)
@@ -323,7 +316,7 @@ def iniciar_sesion(datos: LoginIn):
         seudonimo=u["seudonimo"],
         avatar=u["avatar"],
         modo=modo,
-        token=crear_token(uid, modo, u["rol"]),
+        token=crear_token(uid, modo, u["rol"], u["version_sesion"]),
         rol=u["rol"],
         aviso_pendiente=aviso_pendiente,
     )

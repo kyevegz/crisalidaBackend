@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -36,6 +37,22 @@ JWT_HORAS = int(os.getenv("JWT_HORAS", "24"))
 _CLAVE_AES = base64.b64decode(_requerida("CLAVE_AES"))
 if len(_CLAVE_AES) != 32:
     raise RuntimeError("CLAVE_AES debe ser de 32 bytes (AES-256) en base64")
+
+
+# ---------------------------------------------------------------- REGLAS DEL PIN
+
+PIN_RE = re.compile(r"^\d{6}$")
+PINS_DEBILES = {"123456", "654321", "123123", "121212", "112233", "012345"}
+MAX_INTENTOS = 5          # fallos seguidos antes de bloquear (login y recuperación del PIN)
+MINUTOS_BLOQUEO = 15
+
+
+def validar_pin(pin: str) -> str:
+    if not PIN_RE.match(pin):
+        raise ValueError("El PIN debe tener exactamente 6 dígitos")
+    if len(set(pin)) == 1 or pin in PINS_DEBILES:
+        raise ValueError("Ese PIN es muy fácil de adivinar, elige otro")
+    return pin
 
 
 # ---------------------------------------------------------------- PIN
@@ -99,12 +116,13 @@ HASH_FALSO = hashear_pin("000000")
 
 # ---------------------------------------------------------------- JWT
 
-def crear_token(usuaria_id: str, modo: str, rol: str = "vendedora") -> str:
+def crear_token(usuaria_id: str, modo: str, rol: str = "vendedora", version_sesion: int = 0) -> str:
     ahora = datetime.now(timezone.utc)
     payload = {
         "sub": usuaria_id,
         "modo": modo,  # "normal" o "camuflaje"
         "rol": rol,    # "vendedora" o "compradora"
+        "sv": version_sesion,   # versión de sesión: si la usuaria cambia su PIN por recuperación, sube y este token deja de valer
         "iat": ahora,
         "exp": ahora + timedelta(hours=JWT_HORAS),
     }
