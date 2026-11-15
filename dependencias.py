@@ -3,6 +3,7 @@ import jwt  # PyJWT
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from db import obtener_conexion
 from seguridad import decodificar_token
 
 esquema_bearer = HTTPBearer(auto_error=False)
@@ -18,12 +19,24 @@ def _datos_token(cred: HTTPAuthorizationCredentials | None) -> dict:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
 
 
+def _sesion_vigente(datos: dict) -> None:
+    """El token lleva la versión de sesión con la que se emitió ('sv'; los anteriores a esto valen 0).
+    Si la usuaria recuperó su PIN, su versión subió y las sesiones anteriores ya no sirven."""
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT version_sesion FROM usuarias WHERE id = %s", (datos["sub"],))
+            fila = cur.fetchone()
+    if fila is None or fila["version_sesion"] != datos.get("sv", 0):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
+
+
 def usuaria_actual(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer)) -> dict:
     """Sesión de una usuaria YA registrada (normal o camuflaje).
     El pase temporal del registro ('registro') NO sirve aquí: su 'sub' es un seudónimo, no un id."""
     datos = _datos_token(cred)
     if datos.get("modo") not in ("normal", "camuflaje"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
+    _sesion_vigente(datos)
     # Los tokens emitidos antes del rol no lo traen: todas esas cuentas eran vendedoras
     return {"id": datos["sub"], "modo": datos["modo"], "rol": datos.get("rol", "vendedora")}
 
@@ -61,6 +74,8 @@ def sesion_radar(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer)) -
     # (el pase 'registro' todavía no tiene rol: la persona aún no tiene cuenta)
     if datos["modo"] == "normal" and datos.get("rol", "vendedora") != "vendedora":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
+    if datos["modo"] == "normal":
+        _sesion_vigente(datos)
     return {"id": datos["sub"], "modo": datos["modo"]}
 
 
