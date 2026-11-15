@@ -35,6 +35,7 @@ Córrelas en este orden, completas, en el editor SQL de Neon (o con `psql`):
 | 015 | `015_retos_publicados.sql` | Los retos los pueden publicar usuarias (ya no solo contratistas de demo): `contratista_id` pasa a ser opcional, y se guardan el motivo de rechazo y cuándo se revisó (se puede repetir sin problema) |
 | 016 | `016_moderacion_retos.sql` | Índice para contar los reportes de un reto (el reto con varios reportes se oculta solo hasta que se revise) (se puede repetir sin problema) |
 | 017 | `017_no_aceptar_reto_propio.sql` | Regla en la BD (trigger): una usuaria no puede aceptar un reto que publicó ella (se puede repetir sin problema) |
+| 018 | `018_rechazo_de_entregas.sql` | Motivo, fecha y número de rechazos de una entrega de reto (al rechazarla, la usuaria puede volver a entregar o abandonar) (se puede repetir sin problema) |
 
 Notas:
 - `002` **no** va dentro de una transacción (no tiene `BEGIN/COMMIT`). Si falla a la mitad, revisa qué alcanzó a crear antes de repetirla.
