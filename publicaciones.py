@@ -297,7 +297,11 @@ def ver_imagen(imagen_id: str):
     con un cargador de imágenes normal (sin encabezados). Las fotos de productos no son datos sensibles."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT mime, datos FROM publicacion_imagenes WHERE id::text = %s", (imagen_id,))
+            # las fotos de quien pasó a compradora (portafolio oculto) ya no se sirven; vuelven al volver a vender
+            cur.execute("""SELECT i.mime, i.datos FROM publicacion_imagenes i
+                             JOIN publicaciones p ON p.id = i.publicacion_id
+                             JOIN usuarias u ON u.id = p.usuaria_id
+                            WHERE i.id::text = %s AND u.rol = 'vendedora'""", (imagen_id,))
             r = cur.fetchone()
     if r is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Imagen no encontrada")

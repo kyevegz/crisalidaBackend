@@ -19,15 +19,18 @@ def _datos_token(cred: HTTPAuthorizationCredentials | None) -> dict:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
 
 
-def _sesion_vigente(datos: dict) -> None:
+def _sesion_vigente(datos: dict) -> dict:
     """El token lleva la versión de sesión con la que se emitió ('sv'; los anteriores a esto valen 0).
-    Si la usuaria recuperó su PIN, su versión subió y las sesiones anteriores ya no sirven."""
+    Si la usuaria recuperó su PIN, su versión subió y las sesiones anteriores ya no sirven.
+    Devuelve su fila ACTUAL (versión y rol): el rol se toma de la base de datos y no del token, para que un
+    cambio de rol valga al instante en todos sus dispositivos."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT version_sesion FROM usuarias WHERE id = %s", (datos["sub"],))
+            cur.execute("SELECT version_sesion, rol FROM usuarias WHERE id = %s", (datos["sub"],))
             fila = cur.fetchone()
     if fila is None or fila["version_sesion"] != datos.get("sv", 0):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
+    return fila
 
 
 def usuaria_actual(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer)) -> dict:
@@ -36,9 +39,8 @@ def usuaria_actual(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer))
     datos = _datos_token(cred)
     if datos.get("modo") not in ("normal", "camuflaje"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
-    _sesion_vigente(datos)
-    # Los tokens emitidos antes del rol no lo traen: todas esas cuentas eran vendedoras
-    return {"id": datos["sub"], "modo": datos["modo"], "rol": datos.get("rol", "vendedora")}
+    fila = _sesion_vigente(datos)
+    return {"id": datos["sub"], "modo": datos["modo"], "rol": fila["rol"]}
 
 
 def usuaria_modo_normal(usuaria: dict = Depends(usuaria_actual)) -> dict:
@@ -72,10 +74,9 @@ def sesion_radar(cred: HTTPAuthorizationCredentials = Depends(esquema_bearer)) -
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
     # El radar es de la vendedora: una compradora ya registrada no lo usa
     # (el pase 'registro' todavía no tiene rol: la persona aún no tiene cuenta)
-    if datos["modo"] == "normal" and datos.get("rol", "vendedora") != "vendedora":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
     if datos["modo"] == "normal":
-        _sesion_vigente(datos)
+        if _sesion_vigente(datos)["rol"] != "vendedora":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No disponible")
     return {"id": datos["sub"], "modo": datos["modo"]}
 
 
