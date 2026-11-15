@@ -143,11 +143,14 @@ def aceptar(reto_id: str, usuaria: dict = Depends(usuaria_vendedora)):
                     raise HTTPException(status.HTTP_409_CONFLICT,
                                         f"Ya tienes {MAX_RETOS_ACTIVOS} retos en curso. Termina uno antes de tomar otro")
                 cur.execute(
-                    "SELECT id FROM retos WHERE id::text = %s AND estado = 'abierto' AND fecha_limite > now() FOR UPDATE",
+                    "SELECT id, publicado_por FROM retos WHERE id::text = %s AND estado = 'abierto' AND fecha_limite > now() FOR UPDATE",
                     (reto_id,),
                 )
-                if cur.fetchone() is None:
+                reto = cur.fetchone()
+                if reto is None:
                     raise HTTPException(status.HTTP_409_CONFLICT, "Este reto ya no está disponible")
+                if reto["publicado_por"] is not None and str(reto["publicado_por"]) == str(uid):
+                    raise HTTPException(status.HTTP_403_FORBIDDEN, "No puedes aceptar un reto que publicaste tú")
                 cur.execute(
                     "INSERT INTO reto_aceptaciones (reto_id, usuaria_id) VALUES (%s, %s) RETURNING id, aceptado_en",
                     (reto_id, uid),
