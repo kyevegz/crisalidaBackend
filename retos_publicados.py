@@ -14,6 +14,12 @@ Límites contra spam
 - MAX_RETOS_PENDIENTES retos suyos esperando revisión o abiertos a la vez.
 - No se puede publicar dos veces el mismo título mientras el primero siga en revisión o abierto.
 
+Mis retos publicados (issue 7.3)
+- GET /retos/publicados y GET /retos/publicados/{id}: los retos de la usuaria en cualquier estado (en revisión,
+  abierto, asignado, completado, rechazado, cancelado) con sus aceptaciones: quién lo tomó (seudónimo y avatar) y si
+  ya lo entregó. SOLO la dueña los ve: la consulta siempre filtra por publicado_por = ella, y para otra persona un
+  reto ajeno responde 404 (no confirma que existe). Ninguna otra ruta devuelve las aceptaciones de un reto.
+
 Después de publicar
 - El reto queda en estado 'en_revision': no aparece en el tablero hasta que el equipo lo apruebe.
 - Se avisa por correo al equipo (REVISION_CORREO o, si no existe, REPORTES_CORREO). Si el correo falla, el reto
@@ -26,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
 
 from correo import enviar_correo
@@ -189,3 +195,55 @@ def publicar_reto(datos: RetoIn, segundo_plano: BackgroundTasks,
     segundo_plano.add_task(_avisar_al_equipo, reto_id, datos.titulo, datos.descripcion,
                            u["seudonimo"], datos.compensacion)
     return respuesta
+
+# ============================================================ MIS RETOS PUBLICADOS (7.3)
+
+_SQL_MIS_RETOS = """
+SELECT r.id AS reto_id, r.titulo, r.descripcion, r.compensacion, r.fecha_limite, r.estado,
+       r.motivo_rechazo, r.revisado_en, r.creado_en, c.id AS categoria_id, c.nombre AS categoria,
+       COALESCE((SELECT json_agg(json_build_object(
+                    'aceptacion_id', a.id, 'estado', a.estado, 'seudonimo', u.seudonimo, 'avatar', u.avatar,
+                    'aceptado_en', a.aceptado_en, 'entregado_en', a.entregado_en, 'validado_en', a.validado_en)
+                    ORDER BY a.aceptado_en DESC)
+                   FROM reto_aceptaciones a JOIN usuarias u ON u.id = a.usuaria_id
+                  WHERE a.reto_id = r.id), '[]'::json) AS aceptaciones
+  FROM retos r JOIN categorias c ON c.id = r.categoria_id
+ WHERE r.publicado_por = %s"""
+
+
+def _mi_reto(f: dict) -> dict:
+    d = dict(f)
+    d["reto_id"] = str(d["reto_id"])
+    d["compensacion"] = float(d["compensacion"])
+    # La aceptación vigente (si la hay): la que está tomada, entregada o validada
+    d["aceptacion_actual"] = next((a for a in d["aceptaciones"] if a["estado"] in ("aceptado", "entregado", "validado")), None)
+    return d
+
+
+@router.get("/publicados")
+def mis_retos_publicados(estado: Literal["en_revision", "abierto", "asignado", "completado", "rechazado", "cancelado"] | None = None,
+                         limite: int = Query(50, ge=1, le=100), desde: int = Query(0, ge=0),
+                         usuaria: dict = Depends(usuaria_compradora)):
+    """Los retos que publiqué, los más nuevos primero, con quién los tomó y si ya los entregó."""
+    sql, params = _SQL_MIS_RETOS, [usuaria["id"]]
+    if estado:
+        sql += " AND r.estado = %s"
+        params.append(estado)
+    sql += " ORDER BY r.creado_en DESC, r.id LIMIT %s OFFSET %s"
+    params += [limite, desde]
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            return {"retos": [_mi_reto(f) for f in cur.fetchall()]}
+
+
+@router.get("/publicados/{reto_id}")
+def mi_reto_publicado(reto_id: str, usuaria: dict = Depends(usuaria_compradora)):
+    """Un reto mío con sus aceptaciones. Si el reto es de otra persona responde 404 (no confirma que existe)."""
+    with obtener_conexion() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_SQL_MIS_RETOS + " AND r.id::text = %s", (usuaria["id"], reto_id))
+            f = cur.fetchone()
+    if f is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos ese reto")
+    return _mi_reto(f)
