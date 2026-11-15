@@ -64,7 +64,8 @@ def catalogo(tipo: Literal["producto", "servicio"] | None = Query(None),
              limite: int = Query(30, ge=1, le=50),
              desde: int = Query(0, ge=0),
              usuaria: dict = Depends(usuaria_modo_normal)):
-    filtros = ["p.estado = 'activo'", _SIN_BLOQUEOS]
+    # las cuentas suspendidas (en reposo) no muestran sus publicaciones
+    filtros = ["p.estado = 'activo'", "u.estado = 'activa'", _SIN_BLOQUEOS]
     params = [usuaria["id"], usuaria["id"], usuaria["id"]]
     if tipo:
         filtros.append("p.tipo = %s")
@@ -88,7 +89,7 @@ def catalogo(tipo: Literal["producto", "servicio"] | None = Query(None),
 def detalle(publicacion_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute(_SELECT + " WHERE p.id::text = %s AND p.estado = 'activo' AND " + _SIN_BLOQUEOS,
+            cur.execute(_SELECT + " WHERE p.id::text = %s AND p.estado = 'activo' AND u.estado = 'activa' AND " + _SIN_BLOQUEOS,
                         (usuaria["id"], publicacion_id, usuaria["id"], usuaria["id"]))
             r = cur.fetchone()
     if r is None:
