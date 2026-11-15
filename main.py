@@ -24,6 +24,7 @@ from marketplace import router as marketplace_router
 from progreso import router as progreso_router
 from publicaciones import router as publicaciones_router
 from retos import router as retos_router
+from retos_publicados import router as retos_publicados_router
 from recuperacion import router as recuperacion_router
 from reportes import router as reportes_router
 from seguridad import (
@@ -43,6 +44,7 @@ app = FastAPI(title="API Crisálida", version="0.1.0")
 app.include_router(radar_router)   # /radar/...
 app.include_router(progreso_router)        # /progreso/..., /perfil/avatar
 app.include_router(marketplace_router)     # /categorias, /marketplace
+app.include_router(retos_publicados_router)  # POST /retos (publicar un reto)
 app.include_router(retos_router)           # /retos/...
 app.include_router(publicaciones_router)   # /publicaciones/..., /imagenes/...
 app.include_router(bienestar_router)       # /bienestar/...

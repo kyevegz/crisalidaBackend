@@ -16,7 +16,7 @@ MAX_RETOS_ACTIVOS = 3   # para que nadie "acapare" el tablero
 _CAMPOS_RETO = """
        r.id AS reto_id, r.titulo, r.descripcion, r.compensacion, r.duracion_min, r.dificultad,
        r.habilidad_requerida, r.etiqueta, r.fecha_limite, r.estado AS reto_estado,
-       c.id AS categoria_id, c.nombre AS categoria, e.nombre_publico AS contratista,
+       c.id AS categoria_id, c.nombre AS categoria, COALESCE(e.nombre_publico, pu.seudonimo) AS contratista,
        EXISTS (SELECT 1 FROM reto_imagenes ri WHERE ri.reto_id = r.id) AS tiene_imagen
 """
 
@@ -59,7 +59,8 @@ def tablero(categoria_id: int | None = Query(None),
         filtros.append("(r.titulo ILIKE %s OR r.descripcion ILIKE %s)")
         params += [buscar, buscar]
     sql = (f"SELECT {_CAMPOS_RETO} FROM retos r JOIN categorias c ON c.id = r.categoria_id "
-           "JOIN externos e ON e.id = r.contratista_id WHERE " + " AND ".join(filtros) +
+           "LEFT JOIN externos e ON e.id = r.contratista_id "
+           "LEFT JOIN usuarias pu ON pu.id = r.publicado_por WHERE " + " AND ".join(filtros) +
            " ORDER BY r.fecha_limite, r.id LIMIT %s OFFSET %s")
     params += [limite, desde]
     with obtener_conexion() as conn:
@@ -77,7 +78,8 @@ def mis_retos(usuaria: dict = Depends(usuaria_vendedora)):
                       FROM reto_aceptaciones a
                       JOIN retos r ON r.id = a.reto_id
                       JOIN categorias c ON c.id = r.categoria_id
-                      JOIN externos e ON e.id = r.contratista_id
+                      LEFT JOIN externos e ON e.id = r.contratista_id
+           LEFT JOIN usuarias pu ON pu.id = r.publicado_por
                      WHERE a.usuaria_id = %s
                      ORDER BY a.aceptado_en DESC""",
                 (usuaria["id"],),
@@ -110,11 +112,13 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
                            (SELECT a.estado FROM reto_aceptaciones a WHERE a.reto_id = r.id AND a.usuaria_id = %s
                              ORDER BY a.aceptado_en DESC LIMIT 1) AS mi_estado
                       FROM retos r JOIN categorias c ON c.id = r.categoria_id
-                      JOIN externos e ON e.id = r.contratista_id
+                      LEFT JOIN externos e ON e.id = r.contratista_id
+           LEFT JOIN usuarias pu ON pu.id = r.publicado_por
                      WHERE r.id::text = %s
+                       AND (r.estado NOT IN ('en_revision', 'rechazado') OR r.publicado_por = %s)
                        AND (EXISTS (SELECT 1 FROM reto_aceptaciones a2 WHERE a2.reto_id = r.id AND a2.usuaria_id = %s)
                             OR (""" + _SIN_BLOQUEOS + " AND " + _PUBLICADORA_ACTIVA + """))""",
-                (usuaria["id"], usuaria["id"], reto_id, usuaria["id"], usuaria["id"], usuaria["id"]),
+                (usuaria["id"], usuaria["id"], reto_id, usuaria["id"], usuaria["id"], usuaria["id"], usuaria["id"]),
             )
             fila = cur.fetchone()
     if fila is None:
