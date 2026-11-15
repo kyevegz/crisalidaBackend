@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import radar_logica as rl
 from db import obtener_conexion
 from dependencias import usuaria_vendedora
+from idempotencia import clave_idempotencia, guardar_respuesta, reservar
 from marketplace import formatear
 from seguridad import cifrar_texto, descifrar_texto
 
@@ -76,13 +77,21 @@ class EstadoIn(BaseModel):
 
 
 @router.post("/publicaciones", status_code=status.HTTP_201_CREATED)
-def publicar(datos: PublicacionIn, usuaria: dict = Depends(usuaria_vendedora)):
+def publicar(datos: PublicacionIn, response: Response, usuaria: dict = Depends(usuaria_vendedora),
+             clave: str | None = Depends(clave_idempotencia)):
+    """Crea una publicación. Con Idempotency-Key, un reenvío devuelve la misma respuesta sin duplicarla."""
     uid = usuaria["id"]
     estado = "activo" if AUTOAPROBAR else "en_revision"
     punto = cifrar_texto(datos.punto_entrega) if datos.punto_entrega and datos.punto_entrega.strip() else None
     with obtener_conexion() as conn:
         try:
             with conn.cursor() as cur:
+                if clave:
+                    previo = reservar(cur, uid, clave, "publicar")
+                    if previo is not None:
+                        conn.commit()
+                        response.headers["Idempotent-Replay"] = "true"
+                        return previo
                 cur.execute("SELECT id FROM categorias WHERE ambito = %s AND nombre = %s", (datos.tipo, datos.categoria))
                 cat = cur.fetchone()
                 if cat is None:
@@ -104,11 +113,14 @@ def publicar(datos: PublicacionIn, usuaria: dict = Depends(usuaria_vendedora)):
                 cur.execute("SELECT flores FROM eventos_progreso WHERE tipo = 'publicacion' AND referencia_id = %s",
                             (nueva["id"],))
                 ev = cur.fetchone()
+                resultado = {"id": str(nueva["id"]), "estado": nueva["estado"], "flores_ganadas": ev["flores"] if ev else 0}
+                if clave:
+                    guardar_respuesta(cur, uid, clave, resultado)
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-    return {"id": str(nueva["id"]), "estado": nueva["estado"], "flores_ganadas": ev["flores"] if ev else 0}
+    return resultado
 
 
 @router.get("/publicaciones/mias")
