@@ -30,6 +30,7 @@ Córrelas en este orden, completas, en el editor SQL de Neon (o con `psql`):
 | 010 | `010_codigo_recuperacion.sql` | Columnas `codigo_recuperacion_hash` y `codigo_recuperacion_creado_en` de usuarias: solo se guarda el hash del código de recuperación (se puede repetir sin problema) |
 | 011 | `011_idempotencia.sql` | Tabla `operaciones_idempotentes`: guarda el identificador único que manda la app y la respuesta, para no duplicar si reenvía (se puede repetir sin problema) |
 | 012 | `012_recuperar_pin.sql` | Recuperar el PIN: versión de sesión (un PIN nuevo cierra las sesiones anteriores), contador de intentos de la recuperación y tabla `recuperaciones_pin` con los códigos enviados por correo. **Correr antes de desplegar** (se puede repetir sin problema) |
+| 013 | `013_reportes_y_bloqueos.sql` | Tablas `reportes` (publicación, reto o usuaria, con motivo, prioridad y si el correo al equipo salió) y `bloqueos` (una usuaria bloquea a otra) (se puede repetir sin problema) |
 
 Notas:
 - `002` **no** va dentro de una transacción (no tiene `BEGIN/COMMIT`). Si falla a la mitad, revisa qué alcanzó a crear antes de repetirla.

@@ -23,6 +23,7 @@ from progreso import router as progreso_router
 from publicaciones import router as publicaciones_router
 from retos import router as retos_router
 from recuperacion import router as recuperacion_router
+from reportes import router as reportes_router
 from seguridad import (
     HASH_FALSO,
     MAX_INTENTOS,
@@ -46,6 +47,7 @@ app.include_router(bienestar_router)       # /bienestar/...
 app.include_router(frases_router)          # /frases-apoyo
 app.include_router(datos_personales_router)  # /perfil/datos, /perfil/correo
 app.include_router(recuperacion_router)    # /auth/recuperar/...
+app.include_router(reportes_router)        # /reportes, /bloqueos
 if MODO_DEMO:                              # atajos para la presentación (apagados por defecto)
     app.include_router(demo_router)        # /demo/...
 

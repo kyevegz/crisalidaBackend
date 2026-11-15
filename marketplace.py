@@ -28,6 +28,12 @@ SELECT p.id, p.tipo, p.titulo, p.descripcion, p.precio, p.nota_precio,
 """
 
 
+# Lo bloqueado deja de aparecer, en los dos sentidos: yo no veo lo de quien bloqueé ni quien me bloqueó ve lo mío
+_SIN_BLOQUEOS = """NOT EXISTS (SELECT 1 FROM bloqueos b
+                  WHERE (b.usuaria_id = %s AND b.bloqueada_id = p.usuaria_id)
+                     OR (b.usuaria_id = p.usuaria_id AND b.bloqueada_id = %s))"""
+
+
 def formatear(r: dict) -> dict:
     d = dict(r)
     d["precio"] = float(d["precio"])
@@ -58,7 +64,8 @@ def catalogo(tipo: Literal["producto", "servicio"] | None = Query(None),
              limite: int = Query(30, ge=1, le=50),
              desde: int = Query(0, ge=0),
              usuaria: dict = Depends(usuaria_modo_normal)):
-    filtros, params = ["p.estado = 'activo'"], [usuaria["id"]]
+    filtros = ["p.estado = 'activo'", _SIN_BLOQUEOS]
+    params = [usuaria["id"], usuaria["id"], usuaria["id"]]
     if tipo:
         filtros.append("p.tipo = %s")
         params.append(tipo)
@@ -81,7 +88,8 @@ def catalogo(tipo: Literal["producto", "servicio"] | None = Query(None),
 def detalle(publicacion_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute(_SELECT + " WHERE p.id::text = %s AND p.estado = 'activo'", (usuaria["id"], publicacion_id))
+            cur.execute(_SELECT + " WHERE p.id::text = %s AND p.estado = 'activo' AND " + _SIN_BLOQUEOS,
+                        (usuaria["id"], publicacion_id, usuaria["id"], usuaria["id"]))
             r = cur.fetchone()
     if r is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Publicación no encontrada")

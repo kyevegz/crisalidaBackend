@@ -21,6 +21,13 @@ _CAMPOS_RETO = """
 """
 
 
+# Lo bloqueado deja de aparecer, en los dos sentidos (igual que en el marketplace). Los retos sin cuenta detrás
+# (publicado_por vacío, p. ej. los de demo) nunca se ocultan.
+_SIN_BLOQUEOS = """NOT EXISTS (SELECT 1 FROM bloqueos b
+                  WHERE (b.usuaria_id = %s AND b.bloqueada_id = r.publicado_por)
+                     OR (b.usuaria_id = r.publicado_por AND b.bloqueada_id = %s))"""
+
+
 def _reto(r: dict) -> dict:
     d = dict(r)
     d["compensacion"] = float(d["compensacion"])
@@ -35,7 +42,8 @@ def tablero(categoria_id: int | None = Query(None),
             limite: int = Query(30, ge=1, le=50),
             desde: int = Query(0, ge=0),
             usuaria: dict = Depends(usuaria_modo_normal)):
-    filtros, params = ["r.estado = 'abierto'", "r.fecha_limite > now()"], []
+    filtros = ["r.estado = 'abierto'", "r.fecha_limite > now()", _SIN_BLOQUEOS]
+    params = [usuaria["id"], usuaria["id"]]
     if categoria_id:
         filtros.append("r.categoria_id = %s")
         params.append(categoria_id)
@@ -99,8 +107,10 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
                              ORDER BY a.aceptado_en DESC LIMIT 1) AS mi_estado
                       FROM retos r JOIN categorias c ON c.id = r.categoria_id
                       JOIN externos e ON e.id = r.contratista_id
-                     WHERE r.id::text = %s""",
-                (usuaria["id"], usuaria["id"], reto_id),
+                     WHERE r.id::text = %s
+                       AND (EXISTS (SELECT 1 FROM reto_aceptaciones a2 WHERE a2.reto_id = r.id AND a2.usuaria_id = %s)
+                            OR """ + _SIN_BLOQUEOS + """)""",
+                (usuaria["id"], usuaria["id"], reto_id, usuaria["id"], usuaria["id"], usuaria["id"]),
             )
             fila = cur.fetchone()
     if fila is None:
