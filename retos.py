@@ -74,7 +74,8 @@ def mis_retos(usuaria: dict = Depends(usuaria_vendedora)):
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"""SELECT a.id AS aceptacion_id, a.estado, a.aceptado_en, a.entregado_en, a.validado_en, {_CAMPOS_RETO}
+                f"""SELECT a.id AS aceptacion_id, a.estado, a.aceptado_en, a.entregado_en, a.validado_en,
+                           a.motivo_rechazo, a.rechazado_en, a.rechazos, {_CAMPOS_RETO}
                       FROM reto_aceptaciones a
                       JOIN retos r ON r.id = a.reto_id
                       JOIN categorias c ON c.id = r.categoria_id
@@ -181,7 +182,7 @@ def entregar(aceptacion_id: str, response: Response, usuaria: dict = Depends(usu
                         response.headers["Idempotent-Replay"] = "true"
                         return previo
                 cur.execute(
-                    """UPDATE reto_aceptaciones SET estado = 'entregado', entregado_en = now()
+                    """UPDATE reto_aceptaciones SET estado = 'entregado', entregado_en = now(), motivo_rechazo = NULL
                         WHERE id::text = %s AND usuaria_id = %s AND estado = 'aceptado' RETURNING id""",
                     (aceptacion_id, usuaria["id"]),
                 )

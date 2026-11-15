@@ -20,6 +20,16 @@ Mis retos publicados (issue 7.3)
   ya lo entregó. SOLO la dueña los ve: la consulta siempre filtra por publicado_por = ella, y para otra persona un
   reto ajeno responde 404 (no confirma que existe). Ninguna otra ruta devuelve las aceptaciones de un reto.
 
+Validar o rechazar entregas (issue 7.4)
+- POST /retos/aceptaciones/{id}/validar y /rechazar: SOLO quien publicó el reto (para cualquier otra persona la
+  entrega "no existe": 404). Solo se puede revisar una entrega en estado 'entregado'.
+- Validar: la aceptación pasa a 'validado' y la BD (triggers) da las flores a quien hizo el reto UNA sola vez
+  (índice único por aceptación) y marca el reto como 'completado'. Repetir la petición (con o sin Idempotency-Key)
+  no da flores otra vez ni falla. No se mueve dinero: la recompensa en pesos se arregla fuera de la app.
+- Rechazar: pide un motivo breve (5 a 300 caracteres, sin datos de contacto). La aceptación vuelve a 'aceptado'
+  con el motivo guardado: la usuaria puede volver a entregar o abandonar. El reto sigue tomado por ella.
+- A la usuaria se le avisa por correo (si lo tiene verificado) y lo ve en GET /retos/mis.
+
 Después de publicar
 - El reto queda en estado 'en_revision': no aparece en el tablero hasta que el equipo lo apruebe.
 - Se avisa por correo al equipo (REVISION_CORREO o, si no existe, REPORTES_CORREO). Si el correo falla, el reto
@@ -32,9 +42,10 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, field_validator
 
+from avisos import avisar_publicadora
 from correo import enviar_correo
 from db import obtener_conexion
 from dependencias import usuaria_compradora
@@ -203,7 +214,8 @@ SELECT r.id AS reto_id, r.titulo, r.descripcion, r.compensacion, r.fecha_limite,
        r.motivo_rechazo, r.revisado_en, r.creado_en, c.id AS categoria_id, c.nombre AS categoria,
        COALESCE((SELECT json_agg(json_build_object(
                     'aceptacion_id', a.id, 'estado', a.estado, 'seudonimo', u.seudonimo, 'avatar', u.avatar,
-                    'aceptado_en', a.aceptado_en, 'entregado_en', a.entregado_en, 'validado_en', a.validado_en)
+                    'aceptado_en', a.aceptado_en, 'entregado_en', a.entregado_en, 'validado_en', a.validado_en,
+                    'motivo_rechazo', a.motivo_rechazo, 'rechazos', a.rechazos)
                     ORDER BY a.aceptado_en DESC)
                    FROM reto_aceptaciones a JOIN usuarias u ON u.id = a.usuaria_id
                   WHERE a.reto_id = r.id), '[]'::json) AS aceptaciones
@@ -247,3 +259,113 @@ def mi_reto_publicado(reto_id: str, usuaria: dict = Depends(usuaria_compradora))
     if f is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos ese reto")
     return _mi_reto(f)
+
+# ============================================================ VALIDAR / RECHAZAR ENTREGAS (7.4)
+
+class RechazoEntregaIn(BaseModel):
+    motivo: str
+
+    @field_validator("motivo")
+    @classmethod
+    def _motivo(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if not 5 <= len(v) <= 300:
+            raise ValueError("Cuéntale brevemente por qué (de 5 a 300 caracteres)")
+        malos = [m for m in motivos(v) if m in ("contacto", "direccion")]
+        if malos:
+            raise ValueError("Por seguridad, no incluyas datos de contacto ni direcciones. "
+                             "La comunicación se hace dentro de Crisálida")
+        return v
+
+
+_SQL_ENTREGA_DE_MI_RETO = """
+SELECT a.id, a.estado, a.usuaria_id, r.titulo
+  FROM reto_aceptaciones a JOIN retos r ON r.id = a.reto_id
+ WHERE a.id::text = %s AND r.publicado_por = %s
+   FOR UPDATE OF a"""
+
+
+def _flores_de(cur, aceptacion_id) -> int:
+    cur.execute("SELECT COALESCE(sum(flores), 0) AS n FROM eventos_progreso WHERE tipo = 'reto' AND referencia_id = %s",
+                (aceptacion_id,))
+    return int(cur.fetchone()["n"])
+
+
+@router.post("/aceptaciones/{aceptacion_id}/validar")
+def validar_entrega(aceptacion_id: str, response: Response, segundo_plano: BackgroundTasks,
+                    usuaria: dict = Depends(usuaria_compradora),
+                    clave: str | None = Depends(clave_idempotencia)):
+    """Da por buena la entrega: la usuaria que hizo el reto recibe sus flores (una sola vez)."""
+    uid = usuaria["id"]
+    with obtener_conexion() as conn:
+        try:
+            with conn.cursor() as cur:
+                if clave:
+                    previo = reservar(cur, uid, clave, f"validar:{aceptacion_id}")
+                    if previo is not None:
+                        conn.commit()
+                        response.headers["Idempotent-Replay"] = "true"
+                        return previo
+                cur.execute(_SQL_ENTREGA_DE_MI_RETO, (aceptacion_id, uid))
+                a = cur.fetchone()
+                if a is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos esa entrega")
+                nuevo = a["estado"] == "entregado"
+                if a["estado"] not in ("entregado", "validado"):
+                    raise HTTPException(status.HTTP_409_CONFLICT, "Esta entrega todavía no se puede validar")
+                if nuevo:
+                    # Los triggers de la BD dan las flores (una vez, por índice único) y completan el reto
+                    cur.execute("UPDATE reto_aceptaciones SET estado = 'validado' WHERE id = %s", (a["id"],))
+                respuesta = {"aceptacion_id": str(a["id"]), "estado": "validado", "flores_otorgadas": _flores_de(cur, a["id"])}
+                if clave:
+                    guardar_respuesta(cur, uid, clave, respuesta)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    if nuevo:
+        segundo_plano.add_task(
+            avisar_publicadora, a["usuaria_id"], "Crisálida: validaron tu entrega",
+            f"¡Felicidades! Validaron tu entrega del reto «{a['titulo']}» y ganaste "
+            f"{respuesta['flores_otorgadas']} flores para Lilu. 🌸")
+    return respuesta
+
+
+@router.post("/aceptaciones/{aceptacion_id}/rechazar")
+def rechazar_entrega(aceptacion_id: str, datos: RechazoEntregaIn, response: Response, segundo_plano: BackgroundTasks,
+                     usuaria: dict = Depends(usuaria_compradora),
+                     clave: str | None = Depends(clave_idempotencia)):
+    """Rechaza la entrega con un motivo. La usuaria puede corregirla y volver a entregar, o abandonar el reto."""
+    uid = usuaria["id"]
+    with obtener_conexion() as conn:
+        try:
+            with conn.cursor() as cur:
+                if clave:
+                    previo = reservar(cur, uid, clave, f"rechazar:{aceptacion_id}")
+                    if previo is not None:
+                        conn.commit()
+                        response.headers["Idempotent-Replay"] = "true"
+                        return previo
+                cur.execute(_SQL_ENTREGA_DE_MI_RETO, (aceptacion_id, uid))
+                a = cur.fetchone()
+                if a is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos esa entrega")
+                if a["estado"] != "entregado":
+                    raise HTTPException(status.HTTP_409_CONFLICT, "Solo se puede rechazar una entrega que ya fue enviada")
+                # Vuelve a 'aceptado' (no a 'rechazado': ese estado soltaría el reto para otra persona)
+                cur.execute("""UPDATE reto_aceptaciones
+                                  SET estado = 'aceptado', entregado_en = NULL, motivo_rechazo = %s,
+                                      rechazado_en = now(), rechazos = rechazos + 1
+                                WHERE id = %s""", (datos.motivo, a["id"]))
+                respuesta = {"aceptacion_id": str(a["id"]), "estado": "aceptado", "motivo_rechazo": datos.motivo}
+                if clave:
+                    guardar_respuesta(cur, uid, clave, respuesta)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    segundo_plano.add_task(
+        avisar_publicadora, a["usuaria_id"], "Crisálida: tu entrega necesita cambios",
+        f"Revisaron tu entrega del reto «{a['titulo']}» y piden algunos cambios.\n\nMotivo: {datos.motivo}\n\n"
+        "Puedes corregirla y volver a entregar, o dejar el reto si ya no puedes continuar.")
+    return respuesta
