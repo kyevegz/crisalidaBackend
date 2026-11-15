@@ -107,6 +107,7 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
         with conn.cursor() as cur:
             cur.execute(
                 f"""SELECT {_CAMPOS_RETO},
+                           CASE WHEN r.publicado_por = %s THEN r.motivo_rechazo END AS motivo_rechazo,
                            (SELECT a.id FROM reto_aceptaciones a WHERE a.reto_id = r.id AND a.usuaria_id = %s
                              ORDER BY a.aceptado_en DESC LIMIT 1) AS aceptacion_id,
                            (SELECT a.estado FROM reto_aceptaciones a WHERE a.reto_id = r.id AND a.usuaria_id = %s
@@ -118,7 +119,7 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
                        AND (r.estado NOT IN ('en_revision', 'rechazado') OR r.publicado_por = %s)
                        AND (EXISTS (SELECT 1 FROM reto_aceptaciones a2 WHERE a2.reto_id = r.id AND a2.usuaria_id = %s)
                             OR (""" + _SIN_BLOQUEOS + " AND " + _PUBLICADORA_ACTIVA + """))""",
-                (usuaria["id"], usuaria["id"], reto_id, usuaria["id"], usuaria["id"], usuaria["id"], usuaria["id"]),
+                (usuaria["id"], usuaria["id"], usuaria["id"], reto_id, usuaria["id"], usuaria["id"], usuaria["id"], usuaria["id"]),
             )
             fila = cur.fetchone()
     if fila is None:

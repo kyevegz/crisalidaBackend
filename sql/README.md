@@ -33,6 +33,7 @@ Córrelas en este orden, completas, en el editor SQL de Neon (o con `psql`):
 | 013 | `013_reportes_y_bloqueos.sql` | Tablas `reportes` (publicación, reto o usuaria, con motivo, prioridad y si el correo al equipo salió) y `bloqueos` (una usuaria bloquea a otra) (se puede repetir sin problema) |
 | 014 | `014_estado_de_cuenta.sql` | Estado de la cuenta (`activa` o `suspendida`) y desde cuándo; una cuenta suspendida no muestra sus publicaciones ni retos pero sigue usando mascota y bienestar (se puede repetir sin problema) |
 | 015 | `015_retos_publicados.sql` | Los retos los pueden publicar usuarias (ya no solo contratistas de demo): `contratista_id` pasa a ser opcional, y se guardan el motivo de rechazo y cuándo se revisó (se puede repetir sin problema) |
+| 016 | `016_moderacion_retos.sql` | Índice para contar los reportes de un reto (el reto con varios reportes se oculta solo hasta que se revise) (se puede repetir sin problema) |
 
 Notas:
 - `002` **no** va dentro de una transacción (no tiene `BEGIN/COMMIT`). Si falla a la mitad, revisa qué alcanzó a crear antes de repetirla.
