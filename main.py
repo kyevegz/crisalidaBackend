@@ -15,6 +15,7 @@ from radar import (
     router as radar_router,
 )
 from bienestar import router as bienestar_router
+from cambio_rol import router as cambio_rol_router
 from cuenta import router as cuenta_router
 from datos_personales import router as datos_personales_router
 from demo import MODO_DEMO, router as demo_router
@@ -50,6 +51,7 @@ app.include_router(datos_personales_router)  # /perfil/datos, /perfil/correo
 app.include_router(recuperacion_router)    # /auth/recuperar/...
 app.include_router(reportes_router)        # /reportes, /bloqueos
 app.include_router(cuenta_router)          # /cuenta/estado, /cuenta/suspender, /cuenta/reactivar
+app.include_router(cambio_rol_router)      # /cuenta/rol
 if MODO_DEMO:                              # atajos para la presentación (apagados por defecto)
     app.include_router(demo_router)        # /demo/...
 
