@@ -15,6 +15,7 @@ from radar import (
     router as radar_router,
 )
 from bienestar import router as bienestar_router
+from cuenta import router as cuenta_router
 from datos_personales import router as datos_personales_router
 from demo import MODO_DEMO, router as demo_router
 from frases import router as frases_router
@@ -48,6 +49,7 @@ app.include_router(frases_router)          # /frases-apoyo
 app.include_router(datos_personales_router)  # /perfil/datos, /perfil/correo
 app.include_router(recuperacion_router)    # /auth/recuperar/...
 app.include_router(reportes_router)        # /reportes, /bloqueos
+app.include_router(cuenta_router)          # /cuenta/estado, /cuenta/suspender, /cuenta/reactivar
 if MODO_DEMO:                              # atajos para la presentación (apagados por defecto)
     app.include_router(demo_router)        # /demo/...
 
@@ -97,6 +99,7 @@ class SesionOut(BaseModel):
     modo: str      # "normal" o "camuflaje" (en camuflaje la app muestra la galería de mariposas)
     token: str
     rol: str = "vendedora"   # "vendedora" o "compradora"
+    estado: str = "activa"   # "activa" o "suspendida" (en reposo: sus publicaciones no se ven; la app lo puede mostrar)
     aviso_version: str = AVISO_VERSION   # versión vigente del aviso
     aviso_pendiente: bool = False        # True: la app debe mostrar el aviso y llamar a /auth/aceptar-aviso
 
@@ -257,7 +260,7 @@ def iniciar_sesion(datos: LoginIn):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, seudonimo, avatar, rol, version_sesion, pin_hash, pin_camuflaje_hash,
+                SELECT id, seudonimo, avatar, rol, estado, version_sesion, pin_hash, pin_camuflaje_hash,
                        bloqueada_hasta, (bloqueada_hasta IS NOT NULL AND bloqueada_hasta > now()) AS bloqueada
                 FROM usuarias
                 WHERE lower(seudonimo) = lower(%s)
@@ -320,6 +323,7 @@ def iniciar_sesion(datos: LoginIn):
         modo=modo,
         token=crear_token(uid, modo, u["rol"], u["version_sesion"]),
         rol=u["rol"],
+        estado=u["estado"],
         aviso_pendiente=aviso_pendiente,
     )
 
@@ -353,9 +357,9 @@ def mi_sesion(usuaria: dict = Depends(usuaria_actual)):
     """Valida que el token siga vigente (la app lo puede llamar al abrirse)."""
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT seudonimo, avatar, rol FROM usuarias WHERE id = %s", (usuaria["id"],))
+            cur.execute("SELECT seudonimo, avatar, rol, estado FROM usuarias WHERE id = %s", (usuaria["id"],))
             u = cur.fetchone()
     if u is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o expirada")
     return {"usuaria_id": usuaria["id"], "seudonimo": u["seudonimo"], "avatar": u["avatar"],
-            "modo": usuaria["modo"], "rol": u["rol"]}
+            "modo": usuaria["modo"], "rol": u["rol"], "estado": u["estado"]}

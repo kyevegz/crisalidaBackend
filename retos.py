@@ -28,6 +28,10 @@ _SIN_BLOQUEOS = """NOT EXISTS (SELECT 1 FROM bloqueos b
                      OR (b.usuaria_id = r.publicado_por AND b.bloqueada_id = %s))"""
 
 
+# Los retos de una cuenta suspendida (en reposo) tampoco se muestran
+_PUBLICADORA_ACTIVA = """NOT EXISTS (SELECT 1 FROM usuarias s WHERE s.id = r.publicado_por AND s.estado = 'suspendida')"""
+
+
 def _reto(r: dict) -> dict:
     d = dict(r)
     d["compensacion"] = float(d["compensacion"])
@@ -42,7 +46,7 @@ def tablero(categoria_id: int | None = Query(None),
             limite: int = Query(30, ge=1, le=50),
             desde: int = Query(0, ge=0),
             usuaria: dict = Depends(usuaria_modo_normal)):
-    filtros = ["r.estado = 'abierto'", "r.fecha_limite > now()", _SIN_BLOQUEOS]
+    filtros = ["r.estado = 'abierto'", "r.fecha_limite > now()", _SIN_BLOQUEOS, _PUBLICADORA_ACTIVA]
     params = [usuaria["id"], usuaria["id"]]
     if categoria_id:
         filtros.append("r.categoria_id = %s")
@@ -109,7 +113,7 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
                       JOIN externos e ON e.id = r.contratista_id
                      WHERE r.id::text = %s
                        AND (EXISTS (SELECT 1 FROM reto_aceptaciones a2 WHERE a2.reto_id = r.id AND a2.usuaria_id = %s)
-                            OR """ + _SIN_BLOQUEOS + """)""",
+                            OR (""" + _SIN_BLOQUEOS + " AND " + _PUBLICADORA_ACTIVA + """))""",
                 (usuaria["id"], usuaria["id"], reto_id, usuaria["id"], usuaria["id"], usuaria["id"]),
             )
             fila = cur.fetchone()
