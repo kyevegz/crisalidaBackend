@@ -144,7 +144,9 @@ def perfil_desde_cliente(perfil: PerfilIn, actividades: list[str]) -> dict:
     ]
     try:
         return rl.validar_perfil(datos, rl.ACTIVIDADES[actividades[0]]["area"])
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        if "habilidades" in str(e):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Deja al menos una habilidad escrita para continuar")
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "El resultado del radar no es válido. Intenta de nuevo")
 
 
