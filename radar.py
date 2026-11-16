@@ -1,11 +1,12 @@
 import json
+import re
 import time
 from collections import defaultdict, deque
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg2.extras import Json
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 import radar_logica as rl
 from db import obtener_conexion
@@ -41,6 +42,20 @@ def _puede_usar_ia(clave: str) -> bool:
 class Bloque1In(BaseModel):
     actividades: list[str] = Field(min_length=1, max_length=4)
     tiempo: str
+    # Las 2 preguntas abiertas fijas (8.1): obligatorias, ni vacías ni demasiado largas
+    gusta: str   # ¿Qué te gusta hacer?
+    sabe: str    # ¿Qué sabes hacer?
+
+    @field_validator("gusta", "sabe")
+    @classmethod
+    def _abiertas(cls, v: str, info: ValidationInfo) -> str:
+        pregunta = "¿Qué te gusta hacer?" if info.field_name == "gusta" else "¿Qué sabes hacer?"
+        v = re.sub(r"\s+", " ", v or "").strip()
+        if len(v) < rl.MIN_ABIERTA:
+            raise ValueError(f"Cuéntanos tu respuesta a «{pregunta}»: escribe al menos {rl.MIN_ABIERTA} letras")
+        if len(v) > rl.MAX_ABIERTA:
+            raise ValueError(f"Tu respuesta a «{pregunta}» es muy larga: máximo {rl.MAX_ABIERTA} caracteres")
+        return v
 
     @field_validator("actividades")
     @classmethod
@@ -106,6 +121,14 @@ def limpiar_respuestas(respuestas: list[RespuestaDinamica]) -> list[dict]:
     ]
 
 
+def limpiar_abiertas(datos: Bloque1In) -> dict:
+    """Las 2 respuestas abiertas, sin teléfonos, correos ni ligas, antes de mandarlas a la IA o guardarlas."""
+    return {
+        "gusta": rl.sanitizar_texto(datos.gusta, rl.MAX_ABIERTA),
+        "sabe": rl.sanitizar_texto(datos.sabe, rl.MAX_ABIERTA),
+    }
+
+
 def perfil_desde_cliente(perfil: PerfilIn, actividades: list[str]) -> dict:
     """Revalida (y recorta) el perfil que mandó la app."""
     try:
@@ -114,12 +137,15 @@ def perfil_desde_cliente(perfil: PerfilIn, actividades: list[str]) -> dict:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "El resultado del radar no es válido. Intenta de nuevo")
 
 
-def guardar_perfil(cur, uid, actividades: list[str], tiempo: str, respuestas: list[dict], perfil: dict) -> None:
+def guardar_perfil(cur, uid, actividades: list[str], tiempo: str, respuestas: list[dict], perfil: dict,
+                   abiertas: dict | None = None) -> None:
     """Guarda el perfilado + habilidades de una usuaria que YA existe.
     Usa el cursor que le pasen para que quien la llame decida la transacción
     (en el registro va junto con la usuaria y la mascota: todo o nada)."""
     # Las respuestas (incluido el texto libre) se guardan cifradas con AES-256-GCM
     paquete = {"actividades": actividades, "tiempo": tiempo, "respuestas": respuestas}
+    if abiertas:
+        paquete["abiertas"] = abiertas   # lo que contestó a «¿Qué te gusta hacer?» y «¿Qué sabes hacer?» (8.1)
     respuestas_cifradas = {"v": 1, "cifrado": cifrar_texto(json.dumps(paquete, ensure_ascii=False))}
 
     cur.execute(
@@ -150,18 +176,19 @@ def guardar_perfil(cur, uid, actividades: list[str], tiempo: str, respuestas: li
 
 @router.get("/bloque1")
 def obtener_bloque1(sesion: dict = Depends(sesion_radar)):
-    """Las 2 preguntas fijas del Bloque I."""
+    """Las preguntas fijas del Bloque I: actividades, tiempo y las 2 abiertas (¿Qué te gusta hacer? / ¿Qué sabes hacer?)."""
     return {"preguntas": rl.preguntas_bloque1()}
 
 
 @router.post("/analizar")
 def analizar(datos: Bloque1In, sesion: dict = Depends(sesion_radar)):
     """Recibe el Bloque I y devuelve el mensaje personalizado + las 3 preguntas del Bloque II."""
+    abiertas = limpiar_abiertas(datos)
     fuente = "respaldo"
     resultado = None
     if _puede_usar_ia(sesion["id"]):
         try:
-            resultado = rl.generar_bloque2_ia(datos.actividades, datos.tiempo)
+            resultado = rl.generar_bloque2_ia(datos.actividades, datos.tiempo, abiertas)
             fuente = "ia"
         except rl.ErrorIA as e:
             print(f"[radar] IA no disponible, uso respaldo: {e}")
@@ -179,12 +206,13 @@ def finalizar(datos: FinalizarIn, sesion: dict = Depends(sesion_radar)):
     - Con una usuaria ya registrada (sesión normal) además lo guarda (por si repite el radar).
     """
     respuestas = limpiar_respuestas(datos.respuestas)
+    abiertas = limpiar_abiertas(datos)
 
     fuente = "respaldo"
     perfil = None
     if _puede_usar_ia(sesion["id"]):
         try:
-            perfil = rl.generar_perfil_ia(datos.actividades, datos.tiempo, respuestas)
+            perfil = rl.generar_perfil_ia(datos.actividades, datos.tiempo, respuestas, abiertas)
             fuente = "ia"
         except rl.ErrorIA as e:
             print(f"[radar] IA no disponible, uso respaldo: {e}")
@@ -195,7 +223,7 @@ def finalizar(datos: FinalizarIn, sesion: dict = Depends(sesion_radar)):
         with obtener_conexion() as conn:
             try:
                 with conn.cursor() as cur:
-                    guardar_perfil(cur, sesion["id"], datos.actividades, datos.tiempo, respuestas, perfil)
+                    guardar_perfil(cur, sesion["id"], datos.actividades, datos.tiempo, respuestas, perfil, abiertas)
                 conn.commit()
             except Exception:
                 conn.rollback()

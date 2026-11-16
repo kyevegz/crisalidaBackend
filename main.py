@@ -10,6 +10,7 @@ from dependencias import sesion_registro, usuaria_actual, usuaria_modo_normal
 from radar import (
     RadarCompletoIn,
     guardar_perfil,
+    limpiar_abiertas,
     limpiar_respuestas,
     perfil_desde_cliente,
     router as radar_router,
@@ -214,6 +215,7 @@ def registrar_completo(datos: RegistroCompletoIn, response: Response, sesion: di
     radar = datos.radar   # None si es compradora (el modelo ya lo validó)
     if radar is not None:
         respuestas = limpiar_respuestas(radar.respuestas)
+        abiertas = limpiar_abiertas(radar)
         perfil = perfil_desde_cliente(radar.perfil, radar.actividades)
 
     with obtener_conexion() as conn:
@@ -237,7 +239,7 @@ def registrar_completo(datos: RegistroCompletoIn, response: Response, sesion: di
                 )
                 # ...y la vendedora con su perfil inicial del radar (RF-03), todo en la misma transacción
                 if radar is not None:
-                    guardar_perfil(cur, usuaria["id"], radar.actividades, radar.tiempo, respuestas, perfil)
+                    guardar_perfil(cur, usuaria["id"], radar.actividades, radar.tiempo, respuestas, perfil, abiertas)
             conn.commit()
         except pg_errors.UniqueViolation:
             conn.rollback()

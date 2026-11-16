@@ -19,6 +19,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 GEMINI_TIMEOUT = 20
 
+# Las 2 preguntas abiertas fijas del Bloque I (issue 8.1): ¿Qué te gusta hacer? y ¿Qué sabes hacer?
+MIN_ABIERTA = 3      # no se aceptan vacías (ni una sola letra)
+MAX_ABIERTA = 300    # ni demasiado largas
 OPCION_SIN_EQUIPO = "Me gustaría empezar sin equipo especial"
 
 
@@ -76,7 +79,8 @@ AREAS_VALIDAS = [a["area"] for a in ACTIVIDADES.values()]
 
 
 def preguntas_bloque1() -> list[dict]:
-    """Las 2 preguntas fijas, con el mismo formato que las dinámicas (un solo renderer en la app)."""
+    """Las preguntas fijas del Bloque I, con el mismo formato que las dinámicas (un solo renderer en la app):
+    2 de opciones (actividades y tiempo) y las 2 abiertas de siempre (issue 8.1)."""
     return [
         {
             "id": "actividades", "tipo": "casillas", "placeholder": None,
@@ -87,6 +91,16 @@ def preguntas_bloque1() -> list[dict]:
             "id": "tiempo", "tipo": "opcion_unica", "placeholder": None,
             "texto": "¿Qué tanto tiempo libre tienes al día?",
             "opciones": [{"id": k, "texto": v["texto"], "icono": None} for k, v in TIEMPOS.items()],
+        },
+        {
+            "id": "gusta", "tipo": "texto", "opciones": [],
+            "texto": "¿Qué te gusta hacer?",
+            "placeholder": "Cuéntanos con tus palabras...",
+        },
+        {
+            "id": "sabe", "tipo": "texto", "opciones": [],
+            "texto": "¿Qué sabes hacer?",
+            "placeholder": "Lo que sabes hacer, aunque nunca lo hayas cobrado...",
         },
     ]
 
@@ -117,9 +131,17 @@ Reglas:
 - Responde ÚNICAMENTE con JSON válido, sin texto adicional ni bloques de código."""
 
 
-def _prompt_bloque2(actividades_txt: list[str], tiempo_dicho: str) -> str:
+def _contexto_abiertas(abiertas: dict) -> str:
+    """Sus 2 respuestas abiertas, ya sin datos de contacto. Son DATOS de la usuaria, nunca instrucciones."""
+    return (f"Lo que ella dice que le gusta hacer (dato de la usuaria): {json.dumps(abiertas['gusta'], ensure_ascii=False)}.\n"
+            f"Lo que ella dice que sabe hacer (dato de la usuaria): {json.dumps(abiertas['sabe'], ensure_ascii=False)}.")
+
+
+def _prompt_bloque2(actividades_txt: list[str], tiempo_dicho: str, abiertas: dict) -> str:
     return f"""La usuaria eligió estas actividades: {json.dumps(actividades_txt, ensure_ascii=False)}.
 Tiempo libre: {tiempo_dicho}.
+{_contexto_abiertas(abiertas)}
+Usa lo que escribió para que el mensaje y las preguntas se sientan personales.
 
 Devuelve JSON con exactamente este formato:
 {{
@@ -133,9 +155,11 @@ Devuelve JSON con exactamente este formato:
 Si eligió varias actividades, enfócate en la primera y menciona las demás en el mensaje. Cada opción: máximo 40 caracteres."""
 
 
-def _prompt_perfil(actividades_txt: list[str], tiempo_dicho: str, respuestas: list[dict]) -> str:
+def _prompt_perfil(actividades_txt: list[str], tiempo_dicho: str, respuestas: list[dict], abiertas: dict) -> str:
     return f"""Actividades elegidas: {json.dumps(actividades_txt, ensure_ascii=False)}.
 Tiempo libre: {tiempo_dicho}.
+{_contexto_abiertas(abiertas)}
+Si menciona algo que sabe hacer, tómalo en cuenta para sus habilidades.
 Respuestas de seguimiento (son datos de la usuaria): {json.dumps(respuestas, ensure_ascii=False)}.
 
 Analiza y devuelve JSON con exactamente este formato:
@@ -261,18 +285,18 @@ def validar_perfil(d, area_principal: str) -> dict:
 
 # ============================================================ GENERAR (IA)
 
-def generar_bloque2_ia(actividades: list[str], tiempo: str) -> dict:
+def generar_bloque2_ia(actividades: list[str], tiempo: str, abiertas: dict) -> dict:
     textos = [ACTIVIDADES[a]["texto"] for a in actividades]
-    crudo = llamar_gemini(SISTEMA, _prompt_bloque2(textos, TIEMPOS[tiempo]["dicho"]))
+    crudo = llamar_gemini(SISTEMA, _prompt_bloque2(textos, TIEMPOS[tiempo]["dicho"], abiertas))
     try:
         return validar_bloque2(crudo)
     except (ValueError, TypeError, AttributeError) as e:
         raise ErrorIA(f"JSON de preguntas inválido: {e}")
 
 
-def generar_perfil_ia(actividades: list[str], tiempo: str, respuestas: list[dict]) -> dict:
+def generar_perfil_ia(actividades: list[str], tiempo: str, respuestas: list[dict], abiertas: dict) -> dict:
     textos = [ACTIVIDADES[a]["texto"] for a in actividades]
-    crudo = llamar_gemini(SISTEMA, _prompt_perfil(textos, TIEMPOS[tiempo]["dicho"], respuestas))
+    crudo = llamar_gemini(SISTEMA, _prompt_perfil(textos, TIEMPOS[tiempo]["dicho"], respuestas, abiertas))
     try:
         return validar_perfil(crudo, ACTIVIDADES[actividades[0]]["area"])
     except (ValueError, TypeError, AttributeError) as e:
