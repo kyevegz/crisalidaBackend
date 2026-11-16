@@ -172,6 +172,7 @@ def _prompt_perfil(actividades_txt: list[str], tiempo_dicho: str, respuestas: li
 Tiempo libre: {tiempo_dicho}.
 {_contexto_abiertas(abiertas)}
 Si menciona algo que sabe hacer, tómalo en cuenta para sus habilidades.
+Una "habilidad" es algo que ella SABE HACER (p. ej. "Hacer pasteles", "Tejer a crochet", "Cuidar huertos"). NO es una habilidad: a quién quiere ofrecer su trabajo, dónde o cómo quiere empezar, el equipo o los materiales que tiene, ni lo que quiere aprender. No las conviertas en habilidades.
 Respuestas de seguimiento (son datos de la usuaria): {json.dumps(respuestas, ensure_ascii=False)}.
 
 Analiza y devuelve JSON con exactamente este formato:
@@ -334,9 +335,17 @@ def generar_perfil_ia(actividades: list[str], tiempo: str, respuestas: list[dict
     textos = [ACTIVIDADES[a]["texto"] for a in actividades]
     crudo = llamar_gemini(SISTEMA, _prompt_perfil(textos, TIEMPOS[tiempo]["dicho"], respuestas, abiertas))
     try:
-        return validar_perfil(crudo, ACTIVIDADES[actividades[0]]["area"])
+        perfil = validar_perfil(crudo, ACTIVIDADES[actividades[0]]["area"])
     except (ValueError, TypeError, AttributeError) as e:
         raise ErrorIA(f"JSON de perfil inválido: {e}")
+    # Defensa: si la IA se equivoca y mete como habilidad algo que no lo es (público, forma de empezar, equipo), se quita
+    no_son_habilidades = {o.lower() for _, ops in CHIPS_GENERICOS_RESPALDO for o in ops}
+    for a in ACTIVIDADES.values():
+        no_son_habilidades |= {o.lower() for o in a["casillas"][1]} | {OPCION_SIN_EQUIPO.lower()}
+    perfil["habilidades"] = [h for h in perfil["habilidades"] if h["titulo"].lower() not in no_son_habilidades]
+    if not perfil["habilidades"]:
+        raise ErrorIA("el perfil no trae habilidades reales")
+    return perfil
 
 
 # ============================================================ RESPALDO (sin IA)
@@ -386,18 +395,24 @@ def bloque2_respaldo(actividades: list[str], tiempo: str) -> dict:
 
 
 def perfil_respaldo(actividades: list[str], tiempo: str, respuestas: list[dict]) -> dict:
-    principal = ACTIVIDADES[actividades[0]]
-    chips = []
-    total_marcadas = 0
-    for r in respuestas:
-        total_marcadas += len(r["seleccion"])
-        if r["tipo"] == "chips":
-            chips = r["seleccion"][:4]
-
-    if chips:
-        habilidades = [{"titulo": c[:60], "descripcion": f"Una de tus fortalezas en {principal['area'].lower()}.",
-                        "categoria": principal["area"]} for c in chips]
-    else:
+    """Perfil sin IA. Las habilidades salen SOLO de lo que ella sabe hacer: lo que marcó en la pregunta de tipo de trabajo
+    de cada una de sus actividades (p. ej. «Postres y pasteles»). NO salen de a quién quiere ofrecer su trabajo,
+    cómo quiere empezar, ni del equipo que tiene: eso no son habilidades."""
+    por_actividad = {}
+    for a in actividades:
+        pregunta = ACTIVIDADES[a]["chips"][0]
+        for r in respuestas:
+            if r.get("tipo") == "chips" and r.get("pregunta") == pregunta:
+                por_actividad[a] = [{"titulo": c[:60],
+                                     "descripcion": f"Una de tus fortalezas en {ACTIVIDADES[a]['area'].lower()}.",
+                                     "categoria": ACTIVIDADES[a]["area"]} for c in r["seleccion"]]
+    habilidades = []
+    for i in range(4):   # de una en una por actividad, para que todas queden representadas
+        for a in actividades:
+            lista = por_actividad.get(a, [])
+            if i < len(lista) and len(habilidades) < 4:
+                habilidades.append(lista[i])
+    if not habilidades:
         habilidades = [{"titulo": ACTIVIDADES[a]["texto"], "descripcion": "Un talento que ya tienes y puedes aprovechar.",
                         "categoria": ACTIVIDADES[a]["area"]} for a in actividades[:4]]
 

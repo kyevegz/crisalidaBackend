@@ -130,9 +130,20 @@ def limpiar_abiertas(datos: Bloque1In) -> dict:
 
 
 def perfil_desde_cliente(perfil: PerfilIn, actividades: list[str]) -> dict:
-    """Revalida (y recorta) el perfil que mandó la app."""
+    """Revalida (y recorta) el perfil que mandó la app. La usuaria pudo EDITARLO (8.3): todo texto libre pasa por
+    el mismo filtro de teléfonos, correos y ligas antes de guardarse."""
+    datos = perfil.model_dump()
+    datos["mensaje_final"] = rl.sanitizar_texto(datos.get("mensaje_final", ""), 300)
+    datos["areas_fuertes"] = [rl.sanitizar_texto(x, 60) for x in datos.get("areas_fuertes", [])]
+    datos["areas_oportunidad"] = [rl.sanitizar_texto(x, 60) for x in datos.get("areas_oportunidad", [])]
+    datos["habilidades"] = [
+        {"titulo": rl.sanitizar_texto(h["titulo"], 60),
+         "descripcion": rl.sanitizar_texto(h.get("descripcion", ""), 160),
+         "categoria": h.get("categoria", "")}
+        for h in datos.get("habilidades", [])
+    ]
     try:
-        return rl.validar_perfil(perfil.model_dump(), rl.ACTIVIDADES[actividades[0]]["area"])
+        return rl.validar_perfil(datos, rl.ACTIVIDADES[actividades[0]]["area"])
     except (ValueError, TypeError):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "El resultado del radar no es válido. Intenta de nuevo")
 
@@ -199,12 +210,9 @@ def analizar(datos: Bloque1In, sesion: dict = Depends(sesion_radar)):
 
 @router.post("/finalizar")
 def finalizar(datos: FinalizarIn, sesion: dict = Depends(sesion_radar)):
-    """Recibe todo y determina las habilidades (RF-03).
-
-    - Durante el registro (pase 'registro') solo CALCULA: la cuenta aún no existe y el perfil
-      se guarda cuando la app llama a /auth/registro-completo.
-    - Con una usuaria ya registrada (sesión normal) además lo guarda (por si repite el radar).
-    """
+    """Calcula la PROPUESTA de resultado (RF-03). NO guarda nada (8.3): la usuaria puede editarla y solo se
+    guarda cuando la acepta (en el registro, con /auth/registro-completo; con una cuenta que ya existe, con
+    /radar/aceptar). Si abandona el radar no queda nada en la base."""
     respuestas = limpiar_respuestas(datos.respuestas)
     abiertas = limpiar_abiertas(datos)
 
@@ -219,16 +227,28 @@ def finalizar(datos: FinalizarIn, sesion: dict = Depends(sesion_radar)):
     if perfil is None:
         perfil = rl.perfil_respaldo(datos.actividades, datos.tiempo, respuestas)
 
-    if sesion["modo"] == "normal":
-        with obtener_conexion() as conn:
-            try:
-                with conn.cursor() as cur:
-                    guardar_perfil(cur, sesion["id"], datos.actividades, datos.tiempo, respuestas, perfil, abiertas)
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
+    return {**perfil, "fuente": fuente}
 
+
+@router.post("/aceptar")
+def aceptar(datos: RadarCompletoIn, sesion: dict = Depends(sesion_radar)):
+    """La usuaria (ya registrada) ACEPTA su resultado, tal cual o editado (8.3): aquí es donde por fin se guarda.
+    Reemplaza su perfil anterior, si lo había. Durante el registro no se usa: ahí se guarda al crear la cuenta."""
+    if sesion["modo"] != "normal":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tu resultado se guarda al terminar tu registro")
+    respuestas = limpiar_respuestas(datos.respuestas)
+    abiertas = limpiar_abiertas(datos)
+    perfil = perfil_desde_cliente(datos.perfil, datos.actividades)
+
+    with obtener_conexion() as conn:
+        try:
+            with conn.cursor() as cur:
+                guardar_perfil(cur, sesion["id"], datos.actividades, datos.tiempo, respuestas, perfil, abiertas)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    fuente = datos.perfil.fuente if datos.perfil.fuente in ("ia", "respaldo") else "respaldo"
     return {**perfil, "fuente": fuente}
 
 
