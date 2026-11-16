@@ -30,6 +30,12 @@ Validar o rechazar entregas (issue 7.4)
   con el motivo guardado: la usuaria puede volver a entregar o abandonar. El reto sigue tomado por ella.
 - A la usuaria se le avisa por correo (si lo tiene verificado) y lo ve en GET /retos/mis.
 
+Foto de referencia (issue 7.5): POST /retos/{id}/imagen
+- UNA sola foto por reto (la tabla reto_imagenes tiene un registro por reto). El cuerpo de la petición ES la imagen
+  (JPEG/PNG/WebP, máx. 400 KB; la app la comprime antes). Solo la dueña del reto y solo mientras está 'en_revision'
+  (después de aprobado ya no se cambia: lo que se aprobó es lo que se ve). Repetir la petición reemplaza la foto.
+- La foto se lee con GET /retos/{id}/imagen (retos.py), que ya usan el tablero y el detalle.
+
 Después de publicar
 - El reto queda en estado 'en_revision': no aparece en el tablero hasta que el equipo lo apruebe.
 - Se avisa por correo al equipo (REVISION_CORREO o, si no existe, REPORTES_CORREO). Si el correo falla, el reto
@@ -42,7 +48,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, field_validator
 
 from avisos import avisar_publicadora
@@ -206,6 +212,56 @@ def publicar_reto(datos: RetoIn, segundo_plano: BackgroundTasks,
     segundo_plano.add_task(_avisar_al_equipo, reto_id, datos.titulo, datos.descripcion,
                            u["seudonimo"], datos.compensacion)
     return respuesta
+
+# ============================================================ FOTO DE REFERENCIA (7.5)
+
+MAX_FOTO_BYTES = 400 * 1024
+
+
+def _tipo_imagen(b: bytes) -> str | None:
+    """Tipo real de la imagen según sus primeros bytes (no se confía en lo que diga la petición)."""
+    if b[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+@router.post("/{reto_id}/imagen", status_code=status.HTTP_201_CREATED)
+async def subir_imagen_reto(reto_id: str, request: Request, usuaria: dict = Depends(usuaria_compradora)):
+    """Sube (o reemplaza) la foto de referencia de un reto mío que sigue en revisión."""
+    declarado = request.headers.get("content-length")
+    if declarado and declarado.isdigit() and int(declarado) > MAX_FOTO_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "La foto pesa demasiado (máx. 400 KB)")
+    datos = await request.body()
+    if len(datos) > MAX_FOTO_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "La foto pesa demasiado (máx. 400 KB)")
+    mime = _tipo_imagen(datos)
+    if mime is None or len(datos) < 100:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Sube una foto JPEG, PNG o WebP")
+
+    with obtener_conexion() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, estado FROM retos WHERE id::text = %s AND publicado_por = %s FOR UPDATE",
+                            (reto_id, usuaria["id"]))
+                r = cur.fetchone()
+                if r is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos ese reto")
+                if r["estado"] != "en_revision":
+                    raise HTTPException(status.HTTP_409_CONFLICT, "Este reto ya fue revisado y su foto no se puede cambiar")
+                cur.execute(
+                    """INSERT INTO reto_imagenes (reto_id, mime, datos) VALUES (%s, %s, %s)
+                       ON CONFLICT (reto_id) DO UPDATE SET mime = EXCLUDED.mime, datos = EXCLUDED.datos, creada_en = now()""",
+                    (r["id"], mime, datos),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return {"subida": True}
 
 # ============================================================ MIS RETOS PUBLICADOS (7.3)
 
