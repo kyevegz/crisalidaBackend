@@ -22,6 +22,13 @@ GEMINI_TIMEOUT = 20
 # Las 2 preguntas abiertas fijas del Bloque I (issue 8.1): ¿Qué te gusta hacer? y ¿Qué sabes hacer?
 MIN_ABIERTA = 3      # no se aceptan vacías (ni una sola letra)
 MAX_ABIERTA = 300    # ni demasiado largas
+
+# Preguntas dinámicas del Bloque II (issue 8.2): la IA genera hasta MAX_DINAMICAS a partir de sus respuestas abiertas
+MIN_DINAMICAS = 3          # si la IA entrega menos, se usa el respaldo
+MAX_DINAMICAS = 6
+MAX_CASILLAS_DINAMICAS = 2  # de «espacio, herramientas o materiales»
+MAX_TEXTO_DINAMICAS = 2     # de texto libre (opcionales)
+
 OPCION_SIN_EQUIPO = "Me gustaría empezar sin equipo especial"
 
 
@@ -141,18 +148,23 @@ def _prompt_bloque2(actividades_txt: list[str], tiempo_dicho: str, abiertas: dic
     return f"""La usuaria eligió estas actividades: {json.dumps(actividades_txt, ensure_ascii=False)}.
 Tiempo libre: {tiempo_dicho}.
 {_contexto_abiertas(abiertas)}
-Usa lo que escribió para que el mensaje y las preguntas se sientan personales.
+
+Genera entre 4 y {MAX_DINAMICAS} preguntas de seguimiento para conocer MÁS a fondo lo que ella contó. Deben nacer de sus dos respuestas abiertas y de sus actividades: profundiza en esos temas concretos (qué técnicas o recetas domina, con qué espacio o materiales cuenta, qué le gustaría aprender, qué le gustaría ofrecer) y NO repitas lo que ya dijo. Cada usuaria debe recibir preguntas distintas según lo que cuente.
 
 Devuelve JSON con exactamente este formato:
 {{
   "mensaje": "máximo 2 frases cálidas que reconozcan su talento principal, mencionen su tiempo libre y digan para qué le conviene (pedidos locales, microrretos, etc.)",
   "preguntas": [
-    {{"tipo": "chips", "texto": "pregunta sobre qué cosas específicas de su actividad principal le salen mejor", "opciones": ["entre 4 y 5 opciones cortas"]}},
-    {{"tipo": "casillas", "texto": "pregunta sobre el espacio, herramientas o electrodomésticos con los que cuenta", "opciones": ["2 o 3 opciones"]}},
-    {{"tipo": "texto", "texto": "pregunta abierta y opcional para que cuente algo más de lo que sabe hacer", "placeholder": "Describe lo que tienes..."}}
+    {{"tipo": "chips", "texto": "pregunta sobre cosas específicas que le salen mejor o le gustaría aprender", "opciones": ["entre 4 y 5 opciones cortas"]}},
+    {{"tipo": "casillas", "texto": "pregunta sobre el espacio, herramientas, materiales o electrodomésticos con los que cuenta", "opciones": ["2 o 3 opciones"]}},
+    {{"tipo": "texto", "texto": "pregunta abierta y opcional para que cuente algo más", "placeholder": "Describe lo que tienes..."}}
   ]
 }}
-Si eligió varias actividades, enfócate en la primera y menciona las demás en el mensaje. Cada opción: máximo 40 caracteres."""
+Reglas de las preguntas:
+- Tipos permitidos: "chips" (puede elegir varias opciones), "casillas" (SOLO sobre espacio, herramientas, materiales o electrodomésticos; máximo {MAX_CASILLAS_DINAMICAS}) y "texto" (abierta y opcional; máximo {MAX_TEXTO_DINAMICAS}).
+- La primera pregunta debe ser de tipo "chips".
+- Entre 4 y {MAX_DINAMICAS} preguntas, ninguna repetida. Cada opción: máximo 40 caracteres.
+- Si eligió varias actividades, reparte las preguntas entre ellas empezando por la primera."""
 
 
 def _prompt_perfil(actividades_txt: list[str], tiempo_dicho: str, respuestas: list[dict], abiertas: dict) -> str:
@@ -184,7 +196,7 @@ def llamar_gemini(sistema: str, usuario: str) -> dict:
         "contents": [{"role": "user", "parts": [{"text": usuario}]}],
         "generationConfig": {
             "temperature": 0.7,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 3072,
             "responseMimeType": "application/json",
         },
     }
@@ -225,31 +237,55 @@ def _lista_textos(valor, maximo_items: int, maximo_largo: int) -> list[str]:
 
 
 def validar_bloque2(d) -> dict:
+    """Deja el Bloque II SIEMPRE con el mismo formato (lo que venga de la IA y el respaldo pasan por aquí):
+    mensaje + de MIN_DINAMICAS a MAX_DINAMICAS preguntas con id d1..dN, tipo chips/casillas/texto, texto,
+    opciones y placeholder. Lo que sobra se recorta; lo que no se puede arreglar se rechaza."""
     if not isinstance(d, dict):
         raise ValueError("la respuesta no es un objeto")
     mensaje = _limpio(d.get("mensaje"), 300)
-    preguntas = d.get("preguntas")
-    if not mensaje or not isinstance(preguntas, list) or len(preguntas) != 3:
+    crudas = d.get("preguntas")
+    if not mensaje or not isinstance(crudas, list) or not crudas:
         raise ValueError("faltan mensaje o preguntas")
-    if [p.get("tipo") if isinstance(p, dict) else None for p in preguntas] != ["chips", "casillas", "texto"]:
-        raise ValueError("los tipos de pregunta no son chips/casillas/texto")
+    if not all(isinstance(p, dict) and p.get("tipo") in ("chips", "casillas", "texto") for p in crudas):
+        raise ValueError("hay preguntas con un tipo que no existe")
+    if crudas[0]["tipo"] != "chips":
+        raise ValueError("la primera pregunta debe ser de tipo chips")
 
     salida = []
-    for i, p in enumerate(preguntas, start=1):
+    vistos = set()
+    casillas = textos = 0
+    for p in crudas:
+        if len(salida) >= MAX_DINAMICAS:
+            break
         texto = _limpio(p.get("texto"), 200)
         if not texto:
             raise ValueError("pregunta sin texto")
-        if p["tipo"] == "texto":
-            salida.append({"id": f"d{i}", "tipo": "texto", "texto": texto, "opciones": [],
+        if texto.lower() in vistos:
+            continue   # pregunta repetida
+        tipo = p["tipo"]
+        id_ = f"d{len(salida) + 1}"
+        if tipo == "texto":
+            if textos >= MAX_TEXTO_DINAMICAS:
+                continue
+            textos += 1
+            salida.append({"id": id_, "tipo": "texto", "texto": texto, "opciones": [],
                            "placeholder": _limpio(p.get("placeholder") or "Describe lo que tienes...", 60)})
-            continue
-        opciones = _lista_textos(p.get("opciones"), 6, 50)
-        if p["tipo"] == "casillas":
-            opciones = [o for o in opciones if o != OPCION_SIN_EQUIPO][:4] + [OPCION_SIN_EQUIPO]
-        if len(opciones) < 2:
-            raise ValueError("muy pocas opciones")
-        salida.append({"id": f"d{i}", "tipo": p["tipo"], "texto": texto, "placeholder": None,
-                       "opciones": [{"id": o, "texto": o, "icono": None} for o in opciones]})
+        else:
+            if tipo == "casillas":
+                if casillas >= MAX_CASILLAS_DINAMICAS:
+                    continue
+                casillas += 1
+            opciones = _lista_textos(p.get("opciones"), 6, 50)
+            if tipo == "casillas":
+                opciones = [o for o in opciones if o != OPCION_SIN_EQUIPO][:4] + [OPCION_SIN_EQUIPO]
+            if len(opciones) < 2:
+                raise ValueError("muy pocas opciones")
+            salida.append({"id": id_, "tipo": tipo, "texto": texto, "placeholder": None,
+                           "opciones": [{"id": o, "texto": o, "icono": None} for o in opciones]})
+        vistos.add(texto.lower())
+
+    if len(salida) < MIN_DINAMICAS:
+        raise ValueError("muy pocas preguntas")
     return {"mensaje": mensaje, "preguntas": salida}
 
 
@@ -305,29 +341,39 @@ def generar_perfil_ia(actividades: list[str], tiempo: str, respuestas: list[dict
 
 # ============================================================ RESPALDO (sin IA)
 
-def _pregunta(id_: str, tipo: str, texto: str, opciones: list[str]) -> dict:
-    return {"id": id_, "tipo": tipo, "texto": texto, "placeholder": None,
-            "opciones": [{"id": o, "texto": o, "icono": None} for o in opciones]}
+# Preguntas abiertas genéricas del banco de respaldo (opcionales)
+TEXTOS_RESPALDO = [
+    ("¿Quieres contarnos algo más sobre lo que sabes hacer?", "Describe lo que tienes..."),
+    ("¿Qué te gustaría aprender o mejorar para ofrecer tu trabajo?", "Cuéntanos con tus palabras..."),
+]
 
 
 def bloque2_respaldo(actividades: list[str], tiempo: str) -> dict:
+    """El banco de preguntas para cuando la IA falla o se alcanzó el límite de uso. Entrega de 4 a 6 preguntas
+    (según cuántas actividades eligió) y pasa por el MISMO validador que la IA, así el formato es idéntico."""
     principal = ACTIVIDADES[actividades[0]]
     t = TIEMPOS[tiempo]
     mensaje = f"¡{principal['talento']}! Veo que cuentas con {t['dicho']}, lo cual es {t['bueno']}."
     otras = [ACTIVIDADES[a]["texto"].lower() for a in actividades[1:]]
     if otras:
         mensaje += f" Más adelante también platicamos de {', '.join(otras)}."
-    texto_chips, opciones_chips = principal["chips"]
-    texto_cas, opciones_cas = principal["casillas"]
-    return {
-        "mensaje": mensaje,
-        "preguntas": [
-            _pregunta("d1", "chips", texto_chips, opciones_chips),
-            _pregunta("d2", "casillas", texto_cas, opciones_cas + [OPCION_SIN_EQUIPO]),
-            {"id": "d3", "tipo": "texto", "opciones": [], "placeholder": "Describe lo que tienes...",
-             "texto": "¿Quieres contarnos algo más sobre lo que sabes hacer?"},
-        ],
-    }
+
+    def chips(a):
+        texto, opciones = ACTIVIDADES[a]["chips"]
+        return {"tipo": "chips", "texto": texto, "opciones": list(opciones)}
+
+    def casillas(a):
+        texto, opciones = ACTIVIDADES[a]["casillas"]
+        return {"tipo": "casillas", "texto": texto, "opciones": list(opciones)}
+
+    def abierta(i):
+        texto, placeholder = TEXTOS_RESPALDO[i]
+        return {"tipo": "texto", "texto": texto, "placeholder": placeholder, "opciones": []}
+
+    preguntas = [chips(actividades[0]), casillas(actividades[0]), abierta(0)]
+    preguntas += [chips(a) for a in actividades[1:3]]   # hasta 2 actividades más, una pregunta de cada una
+    preguntas.append(abierta(1))
+    return validar_bloque2({"mensaje": mensaje, "preguntas": preguntas})
 
 
 def perfil_respaldo(actividades: list[str], tiempo: str, respuestas: list[dict]) -> dict:
