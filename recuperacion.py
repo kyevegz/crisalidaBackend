@@ -2,7 +2,7 @@
 
 Dos caminos, ambos terminan fijando un PIN NUEVO:
   1. POST /auth/recuperar/codigo           seudónimo + código de recuperación (el que se mostró al registrarse)
-  2. POST /auth/recuperar/correo/solicitar seudónimo + correo  -> manda un código de 6 dígitos al correo
+  2. POST /auth/recuperar/correo/solicitar seudónimo + correo  -> manda un código de 6 letras y números al correo
      POST /auth/recuperar/correo/confirmar seudónimo + correo + código + PIN nuevo
      (solo si la cuenta tiene el correo VERIFICADO)
 
@@ -18,7 +18,6 @@ Reglas de seguridad:
 """
 import logging
 import os
-import secrets
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, field_validator
@@ -29,6 +28,8 @@ from seguridad import (
     HASH_FALSO,
     MAX_INTENTOS,
     MINUTOS_BLOQUEO,
+    generar_codigo_recuperacion,
+    hashear_codigo,
     hashear_pin,
     normalizar_codigo,
     validar_pin,
@@ -44,9 +45,11 @@ ESPERA_REENVIO_SEGUNDOS = 60    # mínimo entre un código y el siguiente
 MAX_ENVIOS_DIA = 5              # códigos que se pueden pedir en 24 horas por cuenta
 MAX_INTENTOS_CODIGO = 5         # equivocaciones con un mismo código de correo
 
-# Mensajes iguales para todos los fallos: no revelan si la cuenta existe ni qué dato falló
-MENSAJE_FALLO = "Los datos no son correctos o el código venció"
-MENSAJE_BLOQUEO = "Demasiados intentos. Intenta de nuevo en unos minutos"
+# UN solo mensaje (y un solo código HTTP) para todos los fallos: datos incorrectos, cuenta inexistente, código
+# vencido y cuenta bloqueada por intentos. Así nadie puede saber si un seudónimo existe, ni siquiera provocando
+# el bloqueo. Incluye la pista de esperar para quien sí se bloqueó.
+MENSAJE_FALLO = ("Los datos no son correctos, el código venció o hay demasiados intentos. "
+                 "Espera unos minutos e inténtalo de nuevo")
 MENSAJE_SOLICITUD = ("Si los datos coinciden con una cuenta con correo verificado, te enviamos un código. "
                      "Revisa tu bandeja de entrada y el correo no deseado.")
 MENSAJE_LISTO = "Listo, tu PIN se actualizó. Inicia sesión con tu PIN nuevo."
@@ -108,9 +111,9 @@ class PorCorreoIn(_ConCorreo):
     @field_validator("codigo")
     @classmethod
     def _codigo(cls, v: str) -> str:
-        v = v.strip()
-        if not (v.isascii() and v.isdigit() and len(v) == 6):
-            raise ValueError("El código tiene 6 dígitos")
+        v = normalizar_codigo(v.strip())   # tolera minúsculas, espacios y guiones
+        if not (len(v) == 6 and v.isascii() and v.isalnum()):
+            raise ValueError("El código tiene 6 caracteres (letras y números)")
         return v
 
 
@@ -188,7 +191,8 @@ def recuperar_con_codigo(datos: PorCodigoIn):
                     verificar_codigo(datos.codigo, HASH_FALSO)   # mismo tiempo que un fallo real
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, MENSAJE_FALLO)
                 if u["bloqueada"]:
-                    raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, MENSAJE_BLOQUEO)
+                    verificar_codigo(datos.codigo, HASH_FALSO)   # mismo tiempo y mismo mensaje que un fallo cualquiera
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, MENSAJE_FALLO)
 
                 if not verificar_codigo(datos.codigo, u["codigo_recuperacion_hash"]):
                     _registrar_fallo(cur, u["id"])
@@ -209,8 +213,8 @@ def recuperar_con_codigo(datos: PorCodigoIn):
 def solicitar_codigo_por_correo(datos: SolicitarCorreoIn, segundo_plano: BackgroundTasks):
     """Manda un código al correo SI el seudónimo y el correo coinciden con una cuenta con correo verificado.
     La respuesta es siempre la misma: no dice si la cuenta existe."""
-    codigo = f"{secrets.randbelow(10**6):06d}"
-    codigo_hash = hashear_pin(codigo)   # se hace siempre, exista o no la cuenta (mismo tiempo)
+    codigo = generar_codigo_recuperacion()   # 6 letras y números (sin 0/O/1/I, que se confunden)
+    codigo_hash = hashear_codigo(codigo)     # se hace siempre, exista o no la cuenta (mismo tiempo)
     envio = None
     with obtener_conexion() as conn:
         try:
@@ -262,11 +266,9 @@ def recuperar_con_correo(datos: PorCorreoIn):
                     (datos.seudonimo, datos.correo),
                 )
                 u = cur.fetchone()
-                if u is None:
-                    verificar_pin(datos.codigo, HASH_FALSO)
+                if u is None or u["bloqueada"]:
+                    verificar_codigo(datos.codigo, HASH_FALSO)   # cuenta inexistente o bloqueada: mismo tiempo y mismo mensaje
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, MENSAJE_FALLO)
-                if u["bloqueada"]:
-                    raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, MENSAJE_BLOQUEO)
 
                 # Solo vale el código más reciente, sin usar y vigente
                 cur.execute(
@@ -277,12 +279,12 @@ def recuperar_con_correo(datos: PorCorreoIn):
                 )
                 pedido = cur.fetchone()
                 if pedido is None or pedido["intentos"] >= MAX_INTENTOS_CODIGO:
-                    verificar_pin(datos.codigo, HASH_FALSO)
+                    verificar_codigo(datos.codigo, HASH_FALSO)
                     _registrar_fallo(cur, u["id"])
                     conn.commit()
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, MENSAJE_FALLO)
 
-                if not verificar_pin(datos.codigo, pedido["codigo_hash"]):
+                if not verificar_codigo(datos.codigo, pedido["codigo_hash"]):
                     cur.execute("UPDATE recuperaciones_pin SET intentos = intentos + 1 WHERE id = %s", (pedido["id"],))
                     _registrar_fallo(cur, u["id"])
                     conn.commit()
