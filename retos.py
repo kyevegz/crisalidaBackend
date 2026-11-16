@@ -17,7 +17,8 @@ _CAMPOS_RETO = """
        r.id AS reto_id, r.titulo, r.descripcion, r.compensacion, r.duracion_min, r.dificultad,
        r.habilidad_requerida, r.etiqueta, r.fecha_limite, r.estado AS reto_estado,
        c.id AS categoria_id, c.nombre AS categoria, COALESCE(e.nombre_publico, pu.seudonimo) AS contratista,
-       EXISTS (SELECT 1 FROM reto_imagenes ri WHERE ri.reto_id = r.id) AS tiene_imagen
+       EXISTS (SELECT 1 FROM reto_imagenes ri WHERE ri.reto_id = r.id) AS tiene_imagen,
+       r.publicado_por AS autora_id
 """
 
 
@@ -32,8 +33,12 @@ _SIN_BLOQUEOS = """NOT EXISTS (SELECT 1 FROM bloqueos b
 _PUBLICADORA_ACTIVA = """NOT EXISTS (SELECT 1 FROM usuarias s WHERE s.id = r.publicado_por AND s.estado = 'suspendida')"""
 
 
-def _reto(r: dict) -> dict:
+def _reto(r: dict, uid=None) -> dict:
     d = dict(r)
+    # para la app: «Reportar» y «Bloquear» no aparecen en tu propio reto, y los retos de demo (sin cuenta) no se bloquean
+    autora = d.pop("autora_id", None)
+    d["es_mio"] = autora is not None and uid is not None and str(autora) == str(uid)
+    d["bloqueable"] = autora is not None and not d["es_mio"]
     d["compensacion"] = float(d["compensacion"])
     d["imagen_ruta"] = f"/retos/{d['reto_id']}/imagen" if d.pop("tiene_imagen", False) else None
     return d
@@ -66,7 +71,7 @@ def tablero(categoria_id: int | None = Query(None),
     with obtener_conexion() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, tuple(params))
-            return {"retos": [_reto(r) for r in cur.fetchall()]}
+            return {"retos": [_reto(r, usuaria["id"]) for r in cur.fetchall()]}
 
 
 @router.get("/mis")
@@ -85,7 +90,7 @@ def mis_retos(usuaria: dict = Depends(usuaria_vendedora)):
                      ORDER BY a.aceptado_en DESC""",
                 (usuaria["id"],),
             )
-            return {"retos": [_reto(r) for r in cur.fetchall()]}
+            return {"retos": [_reto(r, usuaria["id"]) for r in cur.fetchall()]}
 
 
 @router.get("/{reto_id}/imagen")
@@ -125,7 +130,7 @@ def detalle(reto_id: str, usuaria: dict = Depends(usuaria_modo_normal)):
             fila = cur.fetchone()
     if fila is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No encontramos ese reto")
-    d = _reto(fila)
+    d = _reto(fila, usuaria["id"])
     d["aceptacion_id"] = str(d["aceptacion_id"]) if d["aceptacion_id"] else None
     return d
 
