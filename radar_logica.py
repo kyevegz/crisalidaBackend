@@ -341,7 +341,13 @@ def generar_perfil_ia(actividades: list[str], tiempo: str, respuestas: list[dict
 
 # ============================================================ RESPALDO (sin IA)
 
-# Preguntas abiertas genéricas del banco de respaldo (opcionales)
+# Preguntas genéricas del banco de respaldo (sirven para cualquier actividad)
+CHIPS_GENERICOS_RESPALDO = [
+    ("¿A quién te gustaría ofrecer tu trabajo?",
+     ["Vecinas y vecinos", "Familiares y conocidas", "Tiendas o negocios locales", "Fiestas y eventos", "Por encargo"]),
+    ("¿Cómo te gustaría empezar?",
+     ["Con pedidos pequeños", "A mi ritmo, desde casa", "Aprendiendo algo nuevo primero", "Con ayuda de otra persona"]),
+]
 TEXTOS_RESPALDO = [
     ("¿Quieres contarnos algo más sobre lo que sabes hacer?", "Describe lo que tienes..."),
     ("¿Qué te gustaría aprender o mejorar para ofrecer tu trabajo?", "Cuéntanos con tus palabras..."),
@@ -349,8 +355,8 @@ TEXTOS_RESPALDO = [
 
 
 def bloque2_respaldo(actividades: list[str], tiempo: str) -> dict:
-    """El banco de preguntas para cuando la IA falla o se alcanzó el límite de uso. Entrega de 4 a 6 preguntas
-    (según cuántas actividades eligió) y pasa por el MISMO validador que la IA, así el formato es idéntico."""
+    """El banco de preguntas para cuando la IA falla o se alcanzó el límite de uso. Siempre entrega 6 preguntas
+    (las de sus actividades y, si faltan, genéricas) y pasa por el MISMO validador que la IA: formato idéntico."""
     principal = ACTIVIDADES[actividades[0]]
     t = TIEMPOS[tiempo]
     mensaje = f"¡{principal['talento']}! Veo que cuentas con {t['dicho']}, lo cual es {t['bueno']}."
@@ -358,21 +364,24 @@ def bloque2_respaldo(actividades: list[str], tiempo: str) -> dict:
     if otras:
         mensaje += f" Más adelante también platicamos de {', '.join(otras)}."
 
-    def chips(a):
-        texto, opciones = ACTIVIDADES[a]["chips"]
+    def chips(texto, opciones):
         return {"tipo": "chips", "texto": texto, "opciones": list(opciones)}
 
-    def casillas(a):
-        texto, opciones = ACTIVIDADES[a]["casillas"]
+    def casillas(texto, opciones):
         return {"tipo": "casillas", "texto": texto, "opciones": list(opciones)}
 
-    def abierta(i):
-        texto, placeholder = TEXTOS_RESPALDO[i]
-        return {"tipo": "texto", "texto": texto, "placeholder": placeholder, "opciones": []}
+    # 1) primero las de opciones: de cada actividad (en el orden en que las eligió) y luego las genéricas
+    opciones_primero = []
+    for i, a in enumerate(actividades):
+        opciones_primero.append(chips(*ACTIVIDADES[a]["chips"]))
+        if i < MAX_CASILLAS_DINAMICAS:
+            opciones_primero.append(casillas(*ACTIVIDADES[a]["casillas"]))
+    opciones_primero += [chips(texto, ops) for texto, ops in CHIPS_GENERICOS_RESPALDO]
+    preguntas = opciones_primero[:MAX_DINAMICAS - 1]
 
-    preguntas = [chips(actividades[0]), casillas(actividades[0]), abierta(0)]
-    preguntas += [chips(a) for a in actividades[1:3]]   # hasta 2 actividades más, una pregunta de cada una
-    preguntas.append(abierta(1))
+    # 2) y al final las de texto libre (opcionales) hasta completar 6
+    for texto, placeholder in TEXTOS_RESPALDO[:min(MAX_TEXTO_DINAMICAS, MAX_DINAMICAS - len(preguntas))]:
+        preguntas.append({"tipo": "texto", "texto": texto, "placeholder": placeholder, "opciones": []})
     return validar_bloque2({"mensaje": mensaje, "preguntas": preguntas})
 
 
