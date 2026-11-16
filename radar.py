@@ -85,7 +85,7 @@ class RespuestaDinamica(BaseModel):
 
 
 class FinalizarIn(Bloque1In):
-    respuestas: list[RespuestaDinamica] = Field(default_factory=list, max_length=3)
+    respuestas: list[RespuestaDinamica] = Field(default_factory=list, max_length=rl.MAX_DINAMICAS)   # hasta 6 (8.2)
 
 
 # --- Lo que la app manda al crear la cuenta: el radar completo + el perfil que se le mostró.
@@ -182,7 +182,7 @@ def obtener_bloque1(sesion: dict = Depends(sesion_radar)):
 
 @router.post("/analizar")
 def analizar(datos: Bloque1In, sesion: dict = Depends(sesion_radar)):
-    """Recibe el Bloque I y devuelve el mensaje personalizado + las 3 preguntas del Bloque II."""
+    """Recibe el Bloque I y devuelve el mensaje personalizado + hasta 6 preguntas dinámicas del Bloque II (IA o respaldo, mismo formato)."""
     abiertas = limpiar_abiertas(datos)
     fuente = "respaldo"
     resultado = None
