@@ -1,4 +1,7 @@
 """Microrretos: tablero, aceptar, entregar y abandonar.
+Quién publicó (issue 7.7): cada reto trae SOLO el seudónimo (contratista) y el avatar (contratista_avatar) de quien lo
+publicó. Nunca su correo ni su nombre real. Los retos de demo (sin cuenta) traen el nombre público del contratista y
+sin avatar.
 Validar un reto lo hace el contratista (todavía sin login): en la demo se simula con SQL o con /demo."""
 from typing import Literal
 
@@ -16,7 +19,7 @@ MAX_RETOS_ACTIVOS = 3   # para que nadie "acapare" el tablero
 _CAMPOS_RETO = """
        r.id AS reto_id, r.titulo, r.descripcion, r.compensacion, r.duracion_min, r.dificultad,
        r.habilidad_requerida, r.etiqueta, r.fecha_limite, r.estado AS reto_estado,
-       c.id AS categoria_id, c.nombre AS categoria, COALESCE(e.nombre_publico, pu.seudonimo) AS contratista,
+       c.id AS categoria_id, c.nombre AS categoria, COALESCE(e.nombre_publico, pu.seudonimo) AS contratista, pu.avatar AS contratista_avatar,
        EXISTS (SELECT 1 FROM reto_imagenes ri WHERE ri.reto_id = r.id) AS tiene_imagen,
        r.publicado_por AS autora_id
 """
