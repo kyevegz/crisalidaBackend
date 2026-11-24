@@ -1,0 +1,3 @@
+# Dependencias para correr las pruebas automáticas:  pip install -r requirements-dev.txt
+-r requirements.txt
+pytest
